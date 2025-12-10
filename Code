@@ -59,12 +59,137 @@ function getInitialData() {
 
   return { projects, reports };
 }
+
 function createPdfBlob(reportData, projectData) {
-  const template = HtmlService.createTemplateFromFile('ReportTemplate');
-  template.report = reportData;
-  template.project = projectData;
-  const htmlContent = template.evaluate().getContent();
-  return Utilities.newBlob(htmlContent, MimeType.HTML).getAs(MimeType.PDF).setName(reportData.docNo + ".pdf");
+  // --- 1. ตั้งค่า ID ---
+  // ใส่ ID ไฟล์ Google Docs Template ที่คุณสร้าง
+  const TEMPLATE_ID = "14VvXqCgBhPMWt-O7mdAZsjXgAbgJu969oyoPqb8g6uU"; 
+  
+  // ป้องกัน Error กรณีไม่มีข้อมูล Project
+  if (!projectData) projectData = { name: "Unknown Project" };
+
+  try {
+    // --- 2. สร้างไฟล์ชั่วคราว ---
+    const tempFile = DriveApp.getFileById(TEMPLATE_ID).makeCopy("TEMP_" + reportData.docNo);
+    const tempDoc = DocumentApp.openById(tempFile.getId());
+    const body = tempDoc.getBody();
+
+    // --- 3. แทนที่ข้อมูลส่วนหัว ---
+    body.replaceText("{{DocNo}}", reportData.docNo || "-");
+    body.replaceText("{{Date}}", reportData.date || "-");
+    body.replaceText("{{ProjectName}}", projectData.name || "-");
+
+    // --- 4. ฟังก์ชันเติมตาราง (Helper) ---
+    const replaceTableRows = (body, marker, dataArray, mapFunction) => {
+      const searchResult = body.findText(marker);
+      if (searchResult) {
+        const element = searchResult.getElement();
+        let row = element.getParent().getParent();
+        if (row.getType() === DocumentApp.ElementType.TABLE_ROW) {
+          const table = row.getParent();
+          const rowIndex = table.getChildIndex(row);
+          
+          if (dataArray && dataArray.length > 0) {
+            dataArray.forEach(item => {
+              const newRow = row.copy();
+              mapFunction(newRow, item);
+              table.insertRow(rowIndex + 1, newRow);
+            });
+            table.removeRow(rowIndex); // ลบแถวต้นฉบับทิ้ง
+          } else {
+            row.asTableRow().getCell(0).setText("- ไม่มีข้อมูล -");
+          }
+        }
+      }
+    };
+
+    // --- 5. เติมข้อมูลลงตาราง ---
+    
+    // 5.1 Equipment
+    replaceTableRows(body, "{{Eq_Name}}", reportData.equipment, (row, item) => {
+      row.replaceText("{{Eq_Name}}", item.name || "-");
+      row.replaceText("{{Eq_Qty}}", (item.qty || "0").toString());
+    });
+
+    // 5.2 Manpower
+    replaceTableRows(body, "{{Mp_Pos}}", reportData.manpower, (row, item) => {
+      row.replaceText("{{Mp_Pos}}", item.position || "-");
+      row.replaceText("{{Mp_Qty}}", (item.qty || "0").toString());
+    });
+
+    // 5.3 Weather
+    replaceTableRows(body, "{{We_Time}}", reportData.weather, (row, item) => {
+      row.replaceText("{{We_Time}}", item.timeRange || "-");
+      row.replaceText("{{We_Cond}}", item.condition || "-");
+    });
+
+    // 5.4 Activities
+    replaceTableRows(body, "{{Act_Item}}", reportData.activities, (row, item) => {
+      row.replaceText("{{Act_Item}}", item.item || "-");
+      row.replaceText("{{Act_Qty}}", (item.qty || "").toString());
+      row.replaceText("{{Act_Unit}}", item.unit || "");
+      row.replaceText("{{Act_Desc}}", item.activity || "-");
+      row.replaceText("{{Act_Loc}}", item.location || "-");
+      row.replaceText("{{Act_Rem}}", item.remark || "-");
+    });
+
+    // 5.5 Lookahead
+    replaceTableRows(body, "{{Look_Item}}", reportData.lookahead, (row, item) => {
+      row.replaceText("{{Look_Item}}", item.item || "-");
+      row.replaceText("{{Look_Qty}}", (item.qty || "").toString());
+      row.replaceText("{{Look_Unit}}", item.unit || "");
+      row.replaceText("{{Look_Desc}}", item.activity || "-");
+      row.replaceText("{{Look_Loc}}", item.location || "-");
+      row.replaceText("{{Look_Rem}}", item.remark || "-");
+    });
+
+    // --- 6. จัดการรูปภาพ (Photo Report) ---
+    const photoMarker = body.findText("{{PhotoSection}}");
+    if (photoMarker) {
+      const photoPara = photoMarker.getElement().getParent().asParagraph();
+      photoPara.setText(""); // ลบตัวแปรทิ้ง
+
+      const photos = reportData.photos || [];
+      photos.forEach(p => {
+        try {
+          if (p.base64) {
+            // ดึง ID จาก URL
+            let imgId = null;
+            if (p.base64.indexOf("id=") > -1) {
+               imgId = p.base64.split("id=")[1].split("&")[0];
+            } else if (p.base64.indexOf("/d/") > -1) {
+               imgId = p.base64.split("/d/")[1].split("/")[0];
+            }
+
+            if (imgId) {
+              const imgBlob = DriveApp.getFileById(imgId).getBlob();
+              const img = photoPara.appendInlineImage(imgBlob);
+              img.setWidth(300); // ปรับความกว้างรูป (px)
+              img.setHeight(225); // ปรับความสูงรูป (px)
+              photoPara.appendText("\n" + (p.desc || "") + "\n\n");
+            }
+          }
+        } catch (e) {
+          console.warn("Image Skip: " + e.toString());
+          photoPara.appendText("\n[รูปภาพโหลดไม่ได้: " + (p.desc||"") + "]\n");
+        }
+      });
+    }
+
+    // --- 7. บันทึกและส่งออก PDF ---
+    tempDoc.saveAndClose();
+    const pdfBlob = tempFile.getAs(MimeType.PDF).setName(reportData.docNo + ".pdf");
+    
+    // ลบไฟล์ Doc ชั่วคราวทิ้ง
+    tempFile.setTrashed(true);
+    
+    return pdfBlob;
+
+  } catch (e) {
+    // ถ้า Error ให้แจ้งเตือนใน Log และโยน Error กลับไปให้หน้าเว็บรู้
+    Logger.log("Critical Error in createPdfBlob: " + e.toString());
+    throw new Error("สร้าง PDF ไม่สำเร็จ: " + e.toString());
+  }
 }
 
 function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl) {

@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Construction Daily Report System v3.0</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+   
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.5.0/Recharts.min.js"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+   
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Kanit', sans-serif; background-color: #f8fafc; }
+    .animate-fade-in { animation: fadeIn 0.3s ease-in-out; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .recharts-wrapper { margin: 0 auto; }
+    .recharts-surface { overflow: visible; }
+    
+    /* Custom Scrollbar */
+    .custom-scrollbar::-webkit-scrollbar { height: 8px; width: 8px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+    
+    const RechartsObj = window.Recharts || {};
+    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } = RechartsObj;
+
+    // --- Icon Component Helper ---
+    const Icon = ({ name, size = 20, className = "" }) => {
+      const iconHtml = useMemo(() => {
+        if (!window.lucide) return "";
+        const pascalName = name.replace(/(^\w|-\w)/g, (c) => c.replace('-', '').toUpperCase());
+        const iconNode = window.lucide.icons ? window.lucide.icons[pascalName] : null;
+        if (iconNode && window.lucide.createElement) {
+            try {
+                const svgElement = window.lucide.createElement(iconNode);
+                svgElement.setAttribute('width', size);
+                svgElement.setAttribute('height', size);
+                if (className) svgElement.setAttribute('class', className);
+                return svgElement.outerHTML;
+            } catch (e) { return ""; }
+        }
+        return "";
+      }, [name, size, className]);
+      if (!iconHtml) return <span style={{display:'inline-block', width:size, height:size}} className="bg-slate-200 rounded"></span>;
+      return <span dangerouslySetInnerHTML={{ __html: iconHtml }} className="inline-flex items-center justify-center" />;
+    };
+    
+    // Icon Definitions
+    const LayoutDashboard = (p) => <Icon name="layout-dashboard" {...p} />;
+    const FileText = (p) => <Icon name="file-text" {...p} />;
+    const Send = (p) => <Icon name="send" {...p} />;
+    const Save = (p) => <Icon name="save" {...p} />;
+    const History = (p) => <Icon name="history" {...p} />;
+    const Settings = (p) => <Icon name="settings" {...p} />;
+    const LogOut = (p) => <Icon name="log-out" {...p} />;
+    const Plus = (p) => <Icon name="plus" {...p} />;
+    const Search = (p) => <Icon name="search" {...p} />;
+    const Truck = (p) => <Icon name="truck" {...p} />;
+    const Users = (p) => <Icon name="users" {...p} />;
+    const CheckCircle2 = (p) => <Icon name="check-circle-2" {...p} />;
+    const AlertCircle = (p) => <Icon name="alert-circle" {...p} />;
+    const FileDown = (p) => <Icon name="file-down" {...p} />;
+    const Menu = (p) => <Icon name="menu" {...p} />;
+    const X = (p) => <Icon name="x" {...p} />;
+    const ChevronDown = (p) => <Icon name="chevron-down" {...p} />;
+    const Trash2 = (p) => <Icon name="trash-2" {...p} />;
+    const Clock = (p) => <Icon name="clock" {...p} />;
+    const Briefcase = (p) => <Icon name="briefcase" {...p} />;
+    const Eye = (p) => <Icon name="eye" {...p} />;
+    const ImageIcon = (p) => <Icon name="image" {...p} />;
+    const Edit = (p) => <Icon name="edit" {...p} />;
+    const Filter = (p) => <Icon name="filter" {...p} />;
+    const Cloud = (p) => <Icon name="cloud" {...p} />;
+    const UserPlus = (p) => <Icon name="user-plus" {...p} />;
+
+    // --- Role Logic ---
+    const checkRole = (userRole, allowedRoles) => {
+        if (!userRole) return false;
+        if (userRole === 'admin') return true; // Admin access all
+        return allowedRoles.includes(userRole);
+    };
+
+    // --- Components ---
+
+    const Sidebar = ({ activeTab, setActiveTab, user }) => {
+      const menuItems = [
+          { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} />, roles: ['admin', 'recorder', 'visitor'] },
+          { id: 'create', label: 'New Report', icon: <Plus size={20} />, roles: ['admin', 'recorder'] },
+          { id: 'history', label: 'History & Sent', icon: <History size={20} />, roles: ['admin', 'recorder', 'visitor'] },
+          { id: 'settings', label: 'System Settings', icon: <Settings size={20} />, roles: ['admin', 'recorder'] } // Visitor cannot see settings
+      ];
+
+      return (
+        <div className="w-64 bg-slate-900 text-white flex flex-col h-screen fixed left-0 top-0 z-20 shadow-xl hidden md:flex">
+          <div className="p-6 border-b border-slate-800 flex items-center space-x-3">
+            <div className="w-10 h-10 bg-orange-500 rounded-lg flex items-center justify-center font-bold text-xl text-white">DR</div>
+            <div><h1 className="font-bold text-lg leading-tight">Daily Report</h1><p className="text-xs text-slate-400">System v3.0</p></div>
+          </div>
+          <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+             {menuItems.map(item => {
+                 if (!checkRole(user.role, item.roles)) return null;
+                 return (
+                    <NavItem 
+                        key={item.id}
+                        icon={item.icon} 
+                        label={item.label} 
+                        active={activeTab === item.id} 
+                        onClick={() => setActiveTab(item.id)} 
+                    />
+                 );
+             })}
+          </nav>
+          <div className="p-4 border-t border-slate-800">
+            <div className="flex items-center space-x-3 mb-4 p-2 bg-slate-800 rounded-lg">
+              <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold uppercase">{user.name.charAt(0)}</div>
+              <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{user.name}</p>
+                  <p className="text-xs text-orange-400 truncate uppercase font-bold">{user.role}</p>
+              </div>
+            </div>
+            <div className="text-center text-xs text-slate-500">Logged in via Google</div>
+          </div>
+        </div>
+      );
+    };
+
+    const NavItem = ({ icon, label, active, onClick }) => (
+      <button onClick={onClick} className={`flex items-center space-x-3 w-full px-4 py-3 rounded-lg transition-all ${active ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+        {icon}<span className="font-medium">{label}</span>
+      </button>
+    );
+
+    const Dashboard = ({ reports, projects }) => {
+      const [filterProjectId, setFilterProjectId] = useState('all');
+      const filteredReports = filterProjectId === 'all' ? reports : reports.filter(r => r.project === parseInt(filterProjectId));
+      const selectedProjectInfo = filterProjectId === 'all' ? { name: 'All Projects', logo: '📊' } : projects.find(p => p.id === parseInt(filterProjectId));
+      
+      const chartData = [
+        { name: 'Mon', reports: filteredReports.filter((_, i) => i % 7 === 0).length + (filterProjectId === 'all' ? 2 : 0) },
+        { name: 'Tue', reports: filteredReports.filter((_, i) => i % 7 === 1).length + (filterProjectId === 'all' ? 1 : 0) },
+        { name: 'Wed', reports: filteredReports.filter((_, i) => i % 7 === 2).length + (filterProjectId === 'all' ? 3 : 0) },
+        { name: 'Thu', reports: filteredReports.filter((_, i) => i % 7 === 3).length + (filterProjectId === 'all' ? 1 : 0) },
+        { name: 'Fri', reports: filteredReports.filter((_, i) => i % 7 === 4).length + (filterProjectId === 'all' ? 2 : 0) },
+        { name: 'Sat', reports: filteredReports.filter((_, i) => i % 7 === 5).length },
+        { name: 'Sun', reports: filteredReports.filter((_, i) => i % 7 === 6).length },
+      ];
+
+      // Helper to render logo/icon in dashboard
+      const renderDashLogo = (logo) => {
+        if(!logo) return '📊';
+        if(logo.toString().startsWith('http') || logo.toString().startsWith('data:')) {
+           return <img src={logo} className="w-8 h-8 object-cover rounded" alt="logo"/>
+        }
+        return logo;
+      }
+
+      return (
+        <div className="space-y-6 animate-fade-in">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <div className="flex items-center gap-3">
+                    <span className="text-3xl">{renderDashLogo(selectedProjectInfo?.logo)}</span>
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-800">
+                             {filterProjectId === 'all' ? 'Dashboard Overview' : selectedProjectInfo?.name}
+                        </h2>
+                        <p className="text-sm text-slate-500 mt-1">{filterProjectId === 'all' ? 'Summary of all ongoing construction projects.' : `Performance summary for ${selectedProjectInfo?.code}`}</p>
+                    </div>
+                </div>
+            </div>
+            <div className="flex items-center gap-3 bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                <Filter size={18} className="text-slate-400 ml-2" />
+                <div className="relative">
+                    <select className="appearance-none bg-transparent pl-2 pr-8 py-1.5 text-sm font-medium text-slate-700 focus:outline-none cursor-pointer w-48" value={filterProjectId} onChange={(e) => setFilterProjectId(e.target.value)}>
+                        <option value="all">View All Projects</option>
+                        <option disabled className="text-slate-300">──────────</option>
+                        {projects.map(p => (<option key={p.id} value={p.id}>{p.code} - {p.name.substring(0, 20)}...</option>))}
+                    </select>
+                    <div className="absolute right-2 top-2.5 pointer-events-none text-slate-400"><ChevronDown size={14} /></div>
+                </div>
+            </div>
+          </div>
+           
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <StatCard title="Total Reports" value={filteredReports.length} icon={<FileText className="text-blue-500" />} change={filterProjectId === 'all' ? "Across all sites" : "For this project"} />
+            <StatCard title="Pending Drafts" value={filteredReports.filter(r => r.status === 'Draft').length} icon={<Save className="text-orange-500" />} change="Needs attention" />
+            <StatCard title="Sent Successfully" value={filteredReports.filter(r => r.status === 'Sent').length} icon={<CheckCircle2 className="text-green-500" />} change="Delivered" />
+            <StatCard title="Issues Reported" value={Math.floor(filteredReports.length * 0.2)} icon={<AlertCircle className="text-red-500" />} change="In last 7 days" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+              <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-700">Submission Activity</h3><span className="text-xs text-slate-400 px-2 py-1 bg-slate-50 rounded">Last 7 Days</span></div>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={12} /><YAxis axisLine={false} tickLine={false} fontSize={12} /><Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="reports" fill="#f97316" radius={[4, 4, 0, 0]} barSize={30} /></BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="font-bold text-slate-700 mb-4">Recent Reports</h3>
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                {filteredReports.length > 0 ? (filteredReports.slice(0, 5).map(report => (
+                    <div key={report.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg border border-slate-100 transition-colors">
+                        <div className="flex items-center space-x-3">
+                        <div className={`w-2 h-2 rounded-full ${report.status === 'Sent' ? 'bg-green-500' : 'bg-orange-500'}`} />
+                        <div><p className="font-medium text-slate-800 text-sm">{report.docNo}</p><p className="text-xs text-slate-500">{projects.find(p => p.id === report.project)?.name}</p></div>
+                        </div>
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${report.status === 'Sent' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{report.status} v.{report.version}</span>
+                    </div>
+                ))) : (<div className="text-center py-8 text-slate-400 text-sm">No reports found for this filter.</div>)}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const StatCard = ({ title, value, icon, change }) => (
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+        <div className="flex justify-between items-start"><div><p className="text-slate-500 text-sm font-medium">{title}</p><h3 className="text-3xl font-bold text-slate-800 mt-1">{value}</h3></div><div className="p-2 bg-slate-50 rounded-lg">{icon}</div></div><p className="text-xs text-slate-400 mt-4">{change}</p>
+      </div>
+    );
+
+    // --- Create Report ---
+    const CreateReport = ({ user, projects, reports, reportToEdit, onSave, onSend }) => {
+      const [selectedProject, setSelectedProject] = useState(projects.length > 0 ? projects[0] : null);
+       
+      const [formData, setFormData] = useState({
+        docNo: '', date: new Date().toISOString().split('T')[0], equipment: [], manpower: [],
+        weather: [{ timeRange: '08:00 - 12:00', condition: 'CLEAR', windSpeed: '10 km/hr' }, { timeRange: '13:00 - 17:00', condition: 'CLOUDY', windSpeed: '15 km/hr' }],
+        activities: [{ item: 'Infrastructure', qty: '', unit: '', activity: '', location: '', problem: '-', remark: '-', photos: [] }],
+        lookahead: [{ item: '', qty: '', unit: '', activity: '', location: '', remark: '-' }]
+      });
+
+      const getNextDocNo = (projId, projCode) => {
+          const projectReports = reports.filter(r => r.project === projId);
+          const nextSeq = projectReports.length + 1;
+          return `${projCode}-RPT-DR-${String(nextSeq).padStart(3, '0')}`;
+      };
+
+      // Helper to render logo
+      const renderLogo = (logo) => {
+          if (!logo) return null;
+          if (logo.startsWith('http') || logo.startsWith('data:')) {
+              return <img src={logo} className="w-full h-full object-contain" alt="Project Logo" />;
+          }
+          return <span className="text-2xl">{logo}</span>;
+      };
+
+      useEffect(() => {
+        if (!selectedProject) return;
+
+        if (reportToEdit) {
+            setFormData(reportToEdit.data);
+            const proj = projects.find(p => p.id === reportToEdit.project);
+            if (proj) setSelectedProject(proj);
+        } else {
+            const newEq = selectedProject.equipmentList.map(item => ({ name: item.name, qty: item.qty }));
+            const newMp = selectedProject.manpowerList.map(item => ({ position: item.name, qty: item.qty }));
+            const nextDocNo = getNextDocNo(selectedProject.id, selectedProject.code);
+            setFormData(prev => ({ ...prev, docNo: nextDocNo, equipment: newEq, manpower: newMp }));
+        }
+      }, [selectedProject, reportToEdit]); 
+
+      const [loading, setLoading] = useState(false);
+      const [notification, setNotification] = useState(null);
+
+      const loadLastDraft = () => {
+        if (!selectedProject) return;
+        setLoading(true);
+        setTimeout(() => {
+            const projectSentReports = reports.filter(r => r.project === selectedProject.id && r.status === 'Sent');
+            if (projectSentReports.length > 0) {
+                const latestReport = projectSentReports.sort((a, b) => b.id - a.id)[0];
+                setFormData(prev => ({
+                    ...prev, 
+                    equipment: latestReport.data.equipment, 
+                    manpower: latestReport.data.manpower,
+                    weather: latestReport.data.weather, 
+                    activities: latestReport.data.activities, 
+                    lookahead: latestReport.data.lookahead
+                }));
+                showNotification(`Loaded data from ${latestReport.docNo}`, "success");
+            } else {
+                showNotification("No previous sent reports found for this project.", "error");
+            }
+            setLoading(false);
+        }, 800);
+      };
+
+      const handleProjectChange = (e) => {
+        const projId = parseInt(e.target.value);
+        const proj = projects.find(p => p.id === projId);
+        if (proj) setSelectedProject(proj);
+      };
+
+      const showNotification = (msg, type) => {
+        setNotification({ msg, type });
+        setTimeout(() => setNotification(null), 3000);
+      };
+
+      const handleSaveDraft = () => {
+        setLoading(true);
+        const dataToSave = { ...formData, project: selectedProject.id, status: 'Draft' };
+        onSend(dataToSave, reportToEdit, () => {
+             setLoading(false);
+             showNotification("Draft Saved Successfully!", "success");
+        });
+      };
+
+      const handleSend = () => {
+        setLoading(true);
+        const dataToSend = { ...formData, project: selectedProject.id, status: 'Sent' };
+        onSend(dataToSend, reportToEdit, () => {
+             setLoading(false);
+             showNotification("Report Sent Successfully!", "success");
+        });
+      };
+      
+      const updateEquipmentQty = (index, val) => { const newEq = [...formData.equipment]; newEq[index].qty = parseInt(val) || 0; setFormData(prev => ({ ...prev, equipment: newEq })); };
+      const updateManpowerQty = (index, val) => { const newMp = [...formData.manpower]; newMp[index].qty = parseInt(val) || 0; setFormData(prev => ({ ...prev, manpower: newMp })); };
+      const addWeatherPeriod = () => { setFormData(prev => ({ ...prev, weather: [...prev.weather, { timeRange: '', condition: 'CLEAR', windSpeed: '' }] })); };
+      const removeWeatherPeriod = (index) => { if (formData.weather.length > 1) { setFormData(prev => ({ ...prev, weather: prev.weather.filter((_, i) => i !== index) })); } };
+      const updateWeather = (index, field, value) => { const newWeather = [...formData.weather]; newWeather[index][field] = value; setFormData(prev => ({ ...prev, weather: newWeather })); };
+      
+      const addRow = (type) => { 
+          const newRow = type === 'activities' 
+            ? { item: '', qty: '', unit: '', activity: '', location: '', problem: '', remark: '', photos: [] } 
+            : { item: '', qty: '', unit: '', activity: '', location: '', remark: '' }; 
+          setFormData(prev => ({ ...prev, [type]: [...prev[type], newRow] })); 
+      };
+      
+      const updateRow = (type, index, field, value) => { const newList = [...formData[type]]; newList[index][field] = value; setFormData(prev => ({ ...prev, [type]: newList })); };
+      const removeRow = (type, index) => { if (formData[type].length > 1) { setFormData(prev => ({ ...prev, [type]: prev[type].filter((_, i) => i !== index) })); } };
+
+      const handlePhotoSelect = (e, activityIndex) => {
+         if (e.target.files && e.target.files[0]) {
+             const file = e.target.files[0];
+             const reader = new FileReader();
+             reader.onload = (x) => {
+                 const newActivities = [...formData.activities];
+                 newActivities[activityIndex].photos.push(x.target.result);
+                 setFormData(prev => ({ ...prev, activities: newActivities }));
+             };
+             reader.readAsDataURL(file);
+         }
+      };
+
+      const handleRemovePhoto = (activityIndex, photoIndex) => {
+        const newActivities = [...formData.activities];
+        newActivities[activityIndex].photos = newActivities[activityIndex].photos.filter((_, i) => i !== photoIndex);
+        setFormData(prev => ({ ...prev, activities: newActivities }));
+      };
+
+      if (!selectedProject) {
+          return (
+            <div className="max-w-4xl mx-auto mt-10 p-10 bg-white rounded-xl shadow-sm border border-slate-100 text-center animate-fade-in">
+                <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-6"><AlertCircle size={40} className="text-orange-500" /></div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">No Projects Found</h3>
+                <p className="text-slate-500 mb-6 max-w-md mx-auto">Please go to Settings to create your first project.</p>
+            </div>
+          );
+      }
+
+      const isEditingSent = reportToEdit && reportToEdit.status === 'Sent';
+
+      return (
+        <div className="max-w-6xl mx-auto space-y-6 pb-20">
+          {notification && (<div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-xl text-white animate-slide-in ${notification.type === 'success' ? 'bg-green-600' : 'bg-blue-600'}`}><div className="flex items-center space-x-2">{notification.type === 'success' ? <CheckCircle2 /> : <FileDown />}<span>{notification.msg}</span></div></div>)}
+
+          {/* Header Controls */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-100 sticky top-0 z-10">
+            <div>
+                <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-bold text-slate-800">{reportToEdit ? `Editing: ${reportToEdit.docNo}` : "New Daily Report"}</h2>
+                    {reportToEdit && (<span className={`px-2 py-0.5 rounded text-xs font-bold ${reportToEdit.status === 'Sent' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{reportToEdit.status} v.{reportToEdit.version}</span>)}
+                </div>
+                <p className="text-sm text-slate-500">{reportToEdit ? "Update report details. Sent reports will create a new version." : "Fill in the details for today's operation."}</p>
+            </div>
+            <div className="flex items-center space-x-3">
+                {!reportToEdit && (<button onClick={loadLastDraft} className="flex items-center space-x-2 px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors"><History size={16} /> <span>Load Last Draft</span></button>)}
+                <div className="h-6 w-px bg-slate-300"></div>
+                {!isEditingSent && (<button onClick={handleSaveDraft} className="flex items-center space-x-2 px-4 py-2 text-orange-600 border border-orange-200 hover:bg-orange-50 rounded-lg text-sm font-medium transition-colors"><Save size={16} /> <span>Save Draft</span></button>)}
+                <button onClick={handleSend} disabled={loading} className="flex items-center space-x-2 px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-orange-500/30 transition-all disabled:opacity-70 disabled:cursor-wait">{loading ? (<><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div><span>Processing...</span></>) : (<><Send size={16} /><span>{isEditingSent ? 'Save New Version' : 'Generate & Send'}</span></>)}</button>
+            </div>
+          </div>
+
+          {/* Project Info Block */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+               <h3 className="font-bold text-slate-700 flex items-center gap-4">
+                 <div className="w-32 h-14 flex items-center justify-center bg-white rounded-lg border border-slate-200 overflow-hidden p-1">
+                    {/* Render Logo with helper */}
+                    {renderLogo(selectedProject.logo)}
+                 </div>
+                 <span>
+                    <div className="text-sm text-slate-400 font-normal">Project</div>
+                    {selectedProject.name}
+                 </span>
+               </h3>
+               <div className="text-xs text-slate-400">System v3.0</div>
+            </div>
+            <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Select Project</label>
+                    <div className="relative">
+                        <select className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 appearance-none bg-white" onChange={handleProjectChange} value={selectedProject.id} disabled={!!reportToEdit}>
+                            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <div className="absolute right-3 top-2.5 pointer-events-none text-slate-400"><ChevronDown size={16} /></div>
+                    </div>
+                </div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Document No.</label><input type="text" value={formData.docNo} readOnly className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none bg-slate-50" /></div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1">Date</label><input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 outline-none" /></div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            {/* Equipment Table */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100">
+                <div className="bg-orange-50 px-6 py-3 border-b border-orange-100 flex justify-between items-center"><h3 className="font-bold text-orange-800 flex items-center gap-2"><Truck size={18} /> Equipment Report</h3><span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded">Edit Qty for Today</span></div>
+                <div className="p-4"><table className="w-full text-sm"><thead><tr className="text-slate-500 border-b border-slate-100"><th className="text-left py-2 font-medium">Machine Type</th><th className="text-center py-2 font-medium w-24">Qty</th></tr></thead><tbody className="divide-y divide-slate-50">{formData.equipment.map((eq, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="py-2">{eq.name}</td><td className="py-2 text-center"><input type="number" className="w-16 text-center border border-slate-200 rounded px-1 py-1 focus:border-orange-500 outline-none font-medium text-slate-700" value={eq.qty} onChange={(e) => updateEquipmentQty(idx, e.target.value)} /></td></tr>))}</tbody></table></div>
+            </div>
+            {/* Manpower & Weather */}
+            <div className="space-y-6">
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100">
+                    <div className="bg-blue-50 px-6 py-3 border-b border-blue-100 flex justify-between items-center"><h3 className="font-bold text-blue-800 flex items-center gap-2"><Users size={18} /> Manpower Report</h3></div>
+                    <div className="p-4"><table className="w-full text-sm"><thead><tr className="text-slate-500 border-b border-slate-100"><th className="text-left py-2 font-medium">Position</th><th className="text-center py-2 font-medium">Total Quantity</th></tr></thead><tbody className="divide-y divide-slate-50">{formData.manpower.map((mp, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="py-2 font-medium text-slate-700">{mp.position}</td><td className="py-2 text-center"><input type="number" className="w-24 text-center border border-slate-200 rounded bg-slate-50 font-medium py-1" value={mp.qty} onChange={(e) => updateManpowerQty(idx, e.target.value)} /></td></tr>))}</tbody></table></div>
+                </div>
+                {/* Weather */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col">
+                    <div className="bg-slate-50 px-6 py-3 border-b border-slate-100 flex justify-between items-center"><h3 className="font-bold text-slate-700 flex items-center gap-2"><Cloud size={18} /> Weather</h3><button onClick={addWeatherPeriod} className="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded flex items-center gap-1 transition-colors"><Plus size={12} /> Add</button></div>
+                    <div className="p-4 flex-1 space-y-3">{formData.weather.map((w, index) => (<div key={index} className="flex items-start gap-2"><div className="flex-1 grid grid-cols-12 gap-2"><div className="col-span-4 relative"><div className="absolute left-2 top-2.5 text-slate-400"><Clock size={14} /></div><input type="text" value={w.timeRange} onChange={(e) => updateWeather(index, 'timeRange', e.target.value)} className="w-full pl-7 pr-2 py-1.5 text-sm border border-slate-200 rounded outline-none" placeholder="Time" /></div><div className="col-span-4"><select value={w.condition} onChange={(e) => updateWeather(index, 'condition', e.target.value)} className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded outline-none"><option>CLEAR</option><option>CLOUDY</option><option>WINDY</option><option>RAINING</option><option>HIGHT WAVE</option></select></div><div className="col-span-4"><input type="text" placeholder="Wind" value={w.windSpeed} onChange={(e) => updateWeather(index, 'windSpeed', e.target.value)} className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded outline-none" /></div></div><button onClick={() => removeWeatherPeriod(index)} className="p-1.5 text-slate-300 hover:text-red-500"><Trash2 size={16} /></button></div>))}</div>
+                </div>
+            </div>
+          </div>
+
+          {/* Activities Table */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-slate-800 text-white px-6 py-3 rounded-t-xl flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Briefcase size={18}/> Today Work Activities</h3><button onClick={() => addRow('activities')} className="text-xs bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button></div>
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                        <tr>
+                            <th className="px-4 py-3 w-16 text-center">Process</th>
+                            <th className="px-4 py-3 min-w-[120px]">Item</th>
+                            <th className="px-4 py-3 w-16">Qty</th>
+                            <th className="px-4 py-3 w-16">Unit</th>
+                            <th className="px-4 py-3 min-w-[200px]">Activity Description</th>
+                            <th className="px-4 py-3 min-w-[100px]">Location</th>
+                            <th className="px-4 py-3 min-w-[120px]">Problem</th>
+                            <th className="px-4 py-3 min-w-[120px]">Remark</th>
+                            <th className="px-4 py-3 min-w-[100px]">Photos</th>
+                            <th className="px-2 py-3"></th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {formData.activities.map((act, idx) => (
+                            <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
+                                <td className="px-4 py-2 text-center text-slate-500 font-medium">{idx + 1}</td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.item} onChange={e => updateRow('activities', idx, 'item', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('activities', idx, 'qty', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('activities', idx, 'unit', e.target.value)} /></td>
+                                <td className="px-4 py-2"><textarea rows={1} className="w-full bg-transparent outline-none resize-none" defaultValue={act.activity} onChange={e => updateRow('activities', idx, 'activity', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.location} onChange={e => updateRow('activities', idx, 'location', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-red-500" defaultValue={act.problem} onChange={e => updateRow('activities', idx, 'problem', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.remark} onChange={e => updateRow('activities', idx, 'remark', e.target.value)} /></td>
+                                <td className="px-4 py-2 text-center">
+                                    <div className="flex flex-col items-center gap-2">
+                                        <input type="file" accept="image/*" id={`photo-upload-${idx}`} className="hidden" onChange={(e) => handlePhotoSelect(e, idx)} />
+                                        <label htmlFor={`photo-upload-${idx}`} className="cursor-pointer text-slate-400 hover:text-orange-500 bg-slate-50 hover:bg-orange-50 p-1.5 rounded-full transition-colors inline-flex"><ImageIcon size={16} /></label>
+                                        {act.photos.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 justify-center mt-1 w-24">
+                                                {act.photos.map((photo, photoIdx) => (
+                                                    <div key={photoIdx} className="relative group/photo w-8 h-8">
+                                                        <img src={photo} alt="Thumb" className="w-full h-full object-cover rounded border border-slate-200" />
+                                                        <button onClick={() => handleRemovePhoto(idx, photoIdx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/photo:opacity-100 transition-opacity"><X size={8} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="px-2 py-2 text-center"><button onClick={() => removeRow('activities', idx)} className="text-slate-300 hover:text-red-500 pt-1"><Trash2 size={14} /></button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+          </div>
+
+          {/* Lookahead Table */}
+          <div className="bg-white rounded-xl shadow-sm border border-slate-100">
+            <div className="bg-slate-700 text-white px-6 py-3 rounded-t-xl flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Eye size={18}/> Daily Lookahead (Next Day Plan)</h3><button onClick={() => addRow('lookahead')} className="text-xs bg-slate-500 hover:bg-slate-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button></div>
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                        <tr>
+                            <th className="px-4 py-3 w-16 text-center">Process</th>
+                            <th className="px-4 py-3 min-w-[120px]">Item</th>
+                            <th className="px-4 py-3 w-16">Qty</th>
+                            <th className="px-4 py-3 w-16">Unit</th>
+                            <th className="px-4 py-3 min-w-[200px]">Activity Description</th>
+                            <th className="px-4 py-3 min-w-[100px]">Location</th>
+                            <th className="px-4 py-3 min-w-[120px]">Remark</th>
+                            <th className="px-2 py-3"></th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {formData.lookahead.map((act, idx) => (
+                            <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
+                                <td className="px-4 py-2 text-center text-slate-500 font-medium">{idx + 1}</td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.item} onChange={e => updateRow('lookahead', idx, 'item', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('lookahead', idx, 'qty', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('lookahead', idx, 'unit', e.target.value)} /></td>
+                                <td className="px-4 py-2"><textarea rows={1} className="w-full bg-transparent outline-none resize-none" defaultValue={act.activity} onChange={e => updateRow('lookahead', idx, 'activity', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.location} onChange={e => updateRow('lookahead', idx, 'location', e.target.value)} /></td>
+                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.remark} onChange={e => updateRow('lookahead', idx, 'remark', e.target.value)} /></td>
+                                <td className="px-2 py-2 text-center"><button onClick={() => removeRow('lookahead', idx)} className="text-slate-300 hover:text-red-500 pt-1"><Trash2 size={14} /></button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+          </div>
+
+        </div>
+      );
+    };
+
+    const ReportList = ({ reports, projects, onEdit }) => (
+        <div className="space-y-6 animate-fade-in">
+            <div className="flex justify-between items-end"><h2 className="text-2xl font-bold text-slate-800">History & Sent Reports</h2></div>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                        <tr>
+                            <th className="px-6 py-4">Status</th>
+                            <th className="px-6 py-4">Document No.</th>
+                            <th className="px-6 py-4">Project</th>
+                            <th className="px-6 py-4">Date</th>
+                            <th className="px-6 py-4">Version</th>
+                            <th className="px-6 py-4 text-right">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {reports.map((report) => (
+                            <tr key={report.id} className="hover:bg-slate-50 transition-colors group">
+                                <td className="px-6 py-4">
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${report.status === 'Sent' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
+                                        {report.status}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-4 font-medium text-slate-900">{report.docNo}</td>
+                                <td className="px-6 py-4 text-slate-500">{projects.find(p=>p.id === report.project)?.name}</td>
+                                <td className="px-6 py-4 text-slate-500">{report.date}</td>
+                                <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
+                                <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                    {/* ปุ่มดู PDF */}
+                                    {report.pdfUrl && (
+                                        <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2" title="Open PDF">
+                                            <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
+                                        </a>
+                                    )}
+                                    <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
+                                        <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+
+    // --- User Management Component (New) ---
+    const UserManagement = ({ userRole }) => {
+        const [users, setUsers] = useState([]);
+        const [editingUser, setEditingUser] = useState(null);
+        
+        useEffect(() => {
+            // Load users from backend
+            google.script.run.withSuccessHandler(setUsers).getUsers();
+        }, []);
+
+        const handleSave = (e) => {
+            e.preventDefault();
+            google.script.run.withSuccessHandler((res) => {
+                alert(res);
+                setEditingUser(null);
+                // Reload users
+                google.script.run.withSuccessHandler(setUsers).getUsers();
+            }).saveUser(editingUser);
+        };
+
+        const handleDelete = (email) => {
+            if(confirm('Are you sure you want to delete this user?')) {
+                google.script.run.withSuccessHandler(() => {
+                    google.script.run.withSuccessHandler(setUsers).getUsers();
+                }).deleteUser(email);
+            }
+        };
+
+        if (userRole !== 'admin') return <div className="p-4 text-red-500">Access Denied: Admins only.</div>;
+
+        return (
+            <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-slate-700">User Access Management</h3>
+                    <button onClick={() => setEditingUser({email:'', role:'visitor', name:''})} className="bg-green-600 text-white px-3 py-2 rounded text-sm flex items-center gap-2 hover:bg-green-700">
+                        <UserPlus size={16}/> Add User
+                    </button>
+                </div>
+                
+                <div className="bg-white rounded-lg border border-slate-100 overflow-hidden">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                            <tr>
+                                <th className="px-4 py-3">Name</th>
+                                <th className="px-4 py-3">Email</th>
+                                <th className="px-4 py-3">Role</th>
+                                <th className="px-4 py-3 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {users.map(u => (
+                                <tr key={u.email} className="hover:bg-slate-50">
+                                    <td className="px-4 py-3 font-medium">{u.name}</td>
+                                    <td className="px-4 py-3 text-slate-600">{u.email}</td>
+                                    <td className="px-4 py-3">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase
+                                            ${u.role === 'admin' ? 'bg-red-100 text-red-700' : 
+                                              u.role === 'recorder' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                            {u.role}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 flex justify-center gap-3">
+                                        <button onClick={()=>setEditingUser(u)} className="text-blue-500 hover:text-blue-700"><Edit size={16}/></button>
+                                        <button onClick={()=>handleDelete(u.email)} className="text-red-500 hover:text-red-700"><Trash2 size={16}/></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {editingUser && (
+                    <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
+                        <div className="bg-white p-6 rounded-lg w-96 shadow-xl">
+                            <h3 className="text-lg font-bold mb-4">{editingUser.email ? 'Edit User' : 'New User'}</h3>
+                            <form onSubmit={handleSave} className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Email</label>
+                                    <input className="w-full border p-2 rounded" value={editingUser.email} onChange={e=>setEditingUser({...editingUser, email:e.target.value})} required disabled={users.some(u=>u.email===editingUser.email && editingUser.email !== '')} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Name</label>
+                                    <input className="w-full border p-2 rounded" value={editingUser.name} onChange={e=>setEditingUser({...editingUser, name:e.target.value})} required />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium mb-1">Role</label>
+                                    <select className="w-full border p-2 rounded" value={editingUser.role} onChange={e=>setEditingUser({...editingUser, role:e.target.value})}>
+                                        <option value="visitor">Visitor</option>
+                                        <option value="recorder">Recorder</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                                <div className="flex justify-end gap-2 mt-4">
+                                    <button type="button" onClick={()=>setEditingUser(null)} className="px-4 py-2 border rounded">Cancel</button>
+                                    <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const SettingsPanel = ({ projects, setProjects, onSaveSettings, userRole }) => {
+        const [activeSection, setActiveSection] = useState('projects');
+        const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id);
+        const [eqName, setEqName] = useState('');
+        const [eqQty, setEqQty] = useState('');
+        const [mpName, setMpName] = useState('');
+        const [mpQty, setMpQty] = useState('');
+        const [newProjectName, setNewProjectName] = useState('');
+        const [newProjectCode, setNewProjectCode] = useState('');
+        const [newProjectLogo, setNewProjectLogo] = useState(''); 
+        const [isEditingProject, setIsEditingProject] = useState(false);
+        const [editingId, setEditingId] = useState(null);
+        const [emailName, setEmailName] = useState('');
+        const [emailPos, setEmailPos] = useState('');
+        const [emailAddr, setEmailAddr] = useState('');
+
+        const activeProject = projects.find(p => p.id === parseInt(selectedProjectId));
+
+        const saveChanges = (updatedProjects) => { setProjects(updatedProjects); onSaveSettings(updatedProjects); };
+
+        const handleLogoUpload = (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                if (file.size > 50000) { 
+                    alert("File is too large! Please use image < 50KB");
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onloadend = () => { setNewProjectLogo(reader.result); };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        const handleAddOrUpdateProject = () => {
+            if (!newProjectName || !newProjectCode) return;
+            const logoToSave = newProjectLogo || "🏗️";
+
+            if (isEditingProject) {
+                const updatedProjects = projects.map(p => p.id === editingId ? { ...p, name: newProjectName, code: newProjectCode, logo: logoToSave } : p);
+                saveChanges(updatedProjects);
+                setIsEditingProject(false); setEditingId(null);
+            } else {
+                const newProj = { id: projects.length > 0 ? Math.max(...projects.map(p => p.id)) + 1 : 1, name: newProjectName, code: newProjectCode, logo: logoToSave, equipmentList: [], manpowerList: [], emailTo: [], emailCc: [] };
+                saveChanges([...projects, newProj]);
+            }
+            setNewProjectName(''); setNewProjectCode(''); setNewProjectLogo('');
+        };
+
+        const startEditProject = (project) => {
+            setNewProjectName(project.name); setNewProjectCode(project.code); setNewProjectLogo(project.logo);
+            setIsEditingProject(true); setEditingId(project.id);
+        };
+
+        const cancelEditProject = () => {
+            setNewProjectName(''); setNewProjectCode(''); setNewProjectLogo('');
+            setIsEditingProject(false); setEditingId(null);
+        };
+
+        const removeProject = (id) => { if (projects.length <= 1) return; const updated = projects.filter(p => p.id !== id); saveChanges(updated); if (selectedProjectId === id) setSelectedProjectId(updated[0].id); };
+        
+        const addItemToProject = (listType, data) => {
+            const updatedProjects = projects.map(p => {
+                if (p.id === parseInt(selectedProjectId)) {
+                    const newItem = (listType === 'emailTo' || listType === 'emailCc') ? data : { name: data.name, qty: parseInt(data.qty) || 0 };
+                    const currentList = p[listType] || [];
+                    return { ...p, [listType]: [...currentList, newItem] };
+                }
+                return p;
+            });
+            saveChanges(updatedProjects);
+        };
+
+        const handleAddList = (type) => {
+            if (type === 'equipmentList') { if(!eqName) return; addItemToProject('equipmentList', { name: eqName, qty: eqQty }); setEqName(''); setEqQty(''); } 
+            else if (type === 'manpowerList') { if(!mpName) return; addItemToProject('manpowerList', { name: mpName, qty: mpQty }); setMpName(''); setMpQty(''); }
+        };
+
+        const handleAddEmail = (type) => {
+            if (!emailAddr || !emailName) return;
+            addItemToProject(type, { name: emailName, position: emailPos, email: emailAddr });
+            setEmailName(''); setEmailPos(''); setEmailAddr('');
+        };
+
+        const removeItemFromProject = (listType, index) => { const updatedProjects = projects.map(p => { if (p.id === parseInt(selectedProjectId)) { return { ...p, [listType]: p[listType].filter((_, i) => i !== index) }; } return p; }); saveChanges(updatedProjects); };
+
+        // Helper function for rendering logo
+        const renderLogo = (logo) => {
+            if (!logo) return <span className="text-slate-300"><ImageIcon size={20}/></span>;
+            if (logo.toString().startsWith('http') || logo.toString().startsWith('data:')) {
+                return <img src={logo} alt="logo" className="w-full h-full object-contain" />;
+            }
+            return <span className="text-xl">{logo}</span>;
+        };
+
+        return (
+            <div className="max-w-5xl mx-auto space-y-6">
+                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Settings size={28} className="text-orange-500" /> System Settings</h2>
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="flex border-b border-slate-100 overflow-x-auto">
+                        <button onClick={() => setActiveSection('projects')} className={`px-6 py-4 font-medium text-sm whitespace-nowrap ${activeSection === 'projects' ? 'text-orange-500 border-b-2 border-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-50'}`}>Projects Management</button>
+                        <button onClick={() => setActiveSection('lists')} className={`px-6 py-4 font-medium text-sm whitespace-nowrap ${activeSection === 'lists' ? 'text-orange-500 border-b-2 border-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-50'}`}>Project Specific Lists</button>
+                        <button onClick={() => setActiveSection('emails')} className={`px-6 py-4 font-medium text-sm whitespace-nowrap ${activeSection === 'emails' ? 'text-orange-500 border-b-2 border-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-50'}`}>Email Configuration</button>
+                        {userRole === 'admin' && (
+                            <button onClick={() => setActiveSection('users')} className={`px-6 py-4 font-medium text-sm whitespace-nowrap ${activeSection === 'users' ? 'text-orange-500 border-b-2 border-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-50'}`}>User Management</button>
+                        )}
+                    </div>
+                    
+                    <div className="p-6">
+                        {activeSection === 'projects' && (
+                            <div className="space-y-6">
+                                <div className={`flex gap-2 items-end p-4 rounded-lg border ${isEditingProject ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100'}`}>
+                                    <div className="w-16 flex flex-col items-center">
+                                        <label className="text-xs text-slate-500 mb-1 block">Logo</label>
+                                        <label className="cursor-pointer w-10 h-10 flex items-center justify-center bg-white border border-slate-300 rounded hover:border-orange-500 overflow-hidden relative group">
+                                            {renderLogo(newProjectLogo)}
+                                            <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                                            <div className="absolute inset-0 bg-black/50 hidden group-hover:flex items-center justify-center text-white"><Edit size={12}/></div>
+                                        </label>
+                                    </div>
+                                    <div className="flex-1"><label className="text-xs text-slate-500 mb-1 block">{isEditingProject ? 'Edit Project Name' : 'New Project Name'}</label><input type="text" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-2 text-sm" placeholder="e.g. Condominium Phase 1" /></div>
+                                    <div className="w-32"><label className="text-xs text-slate-500 mb-1 block">Code</label><input type="text" value={newProjectCode} onChange={e => setNewProjectCode(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-2 text-sm" placeholder="e.g. PROJ-01" /></div>
+                                    <button onClick={handleAddOrUpdateProject} className={`${isEditingProject ? 'bg-blue-600 hover:bg-blue-700' : 'bg-orange-500 hover:bg-orange-600'} text-white px-4 py-2 rounded text-sm font-medium whitespace-nowrap transition-colors mb-0.5`}>{isEditingProject ? 'Update' : 'Add'}</button>
+                                    {isEditingProject && (<button onClick={cancelEditProject} className="bg-slate-200 text-slate-600 px-4 py-2 rounded text-sm font-medium hover:bg-slate-300 mb-0.5">Cancel</button>)}
+                                </div>
+                                <div className="space-y-2">{projects.map(p => (
+                                    <div key={p.id} className="flex justify-between items-center p-3 border border-slate-100 rounded hover:bg-slate-50 transition-colors">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-slate-100 rounded flex items-center justify-center text-lg overflow-hidden border border-slate-200">
+                                                {renderLogo(p.logo)}
+                                            </div>
+                                            <div><p className="font-medium text-sm text-slate-800">{p.name}</p><p className="text-xs text-slate-400">{p.code}</p></div>
+                                        </div>
+                                        <div className="flex items-center gap-1"><button onClick={() => startEditProject(p)} className="text-slate-300 hover:text-blue-500 p-2 rounded hover:bg-blue-50 transition-colors" title="Edit"><Edit size={16} /></button><button onClick={() => removeProject(p.id)} className="text-slate-300 hover:text-red-500 p-2 rounded hover:bg-red-50 transition-colors" title="Delete"><Trash2 size={16} /></button></div>
+                                    </div>
+                                ))}</div>
+                            </div>
+                        )}
+
+                        {activeSection === 'lists' && (
+                             <div className="space-y-6">
+                                <div className="mb-6"><label className="block text-sm font-medium text-slate-700 mb-2">Select Project to Edit</label><div className="relative"><select className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg appearance-none bg-white" value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><ChevronDown className="absolute right-3 top-2.5 text-slate-400 pointer-events-none" size={16} /></div></div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div><h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><Truck size={18}/> Equipment</h3><div className="flex gap-2 mb-3"><input type="text" value={eqName} onChange={e => setEqName(e.target.value)} className="flex-1 border border-slate-200 rounded px-3 py-2 text-sm" placeholder="Name..." /><input type="number" value={eqQty} onChange={e => setEqQty(e.target.value)} className="w-20 border border-slate-200 rounded px-3 py-2 text-sm" placeholder="Qty" /><button onClick={() => handleAddList('equipmentList')} className="bg-slate-800 text-white px-3 py-2 rounded text-sm hover:bg-slate-700"><Plus size={16}/></button></div><ul className="divide-y divide-slate-100 max-h-96 overflow-y-auto border border-slate-100 rounded-lg bg-slate-50/50">{activeProject?.equipmentList.map((item, idx) => (<li key={idx} className="p-3 flex justify-between items-center text-sm text-slate-700 bg-white hover:bg-slate-50"><span className="truncate flex-1 pr-2">{item.name}</span><div className="flex items-center gap-3"><span className="text-xs bg-slate-100 px-2 py-1 rounded">Qty: {item.qty}</span><button onClick={() => removeItemFromProject('equipmentList', idx)} className="text-slate-300 hover:text-red-500"><X size={14} /></button></div></li>))}</ul></div>
+                                    <div><h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><Users size={18}/> Manpower</h3><div className="flex gap-2 mb-3"><input type="text" value={mpName} onChange={e => setMpName(e.target.value)} className="flex-1 border border-slate-200 rounded px-3 py-2 text-sm" placeholder="Pos..." /><input type="number" value={mpQty} onChange={e => setMpQty(e.target.value)} className="w-20 border border-slate-200 rounded px-3 py-2 text-sm" placeholder="Qty" /><button onClick={() => handleAddList('manpowerList')} className="bg-slate-800 text-white px-3 py-2 rounded text-sm hover:bg-slate-700"><Plus size={16}/></button></div><ul className="divide-y divide-slate-100 max-h-96 overflow-y-auto border border-slate-100 rounded-lg bg-slate-50/50">{activeProject?.manpowerList.map((item, idx) => (<li key={idx} className="p-3 flex justify-between items-center text-sm text-slate-700 bg-white hover:bg-slate-50"><span className="truncate flex-1 pr-2">{item.name}</span><div className="flex items-center gap-3"><span className="text-xs bg-slate-100 px-2 py-1 rounded">Qty: {item.qty}</span><button onClick={() => removeItemFromProject('manpowerList', idx)} className="text-slate-300 hover:text-red-500"><X size={14} /></button></div></li>))}</ul></div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeSection === 'emails' && (
+                            <div className="space-y-6">
+                                <div className="mb-6"><label className="block text-sm font-medium text-slate-700 mb-2">Select Project to Configure Emails</label><div className="relative"><select className="w-full pl-3 pr-10 py-2 border border-slate-300 rounded-lg appearance-none bg-white" value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><ChevronDown className="absolute right-3 top-2.5 text-slate-400 pointer-events-none" size={16} /></div></div>
+                                <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                                    <div><label className="text-xs text-slate-500 mb-1 block">Name</label><input type="text" value={emailName} onChange={e => setEmailName(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-2 text-sm" placeholder="John Doe" /></div>
+                                    <div><label className="text-xs text-slate-500 mb-1 block">Position</label><input type="text" value={emailPos} onChange={e => setEmailPos(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-2 text-sm" placeholder="Project Manager" /></div>
+                                    <div className="md:col-span-2"><label className="text-xs text-slate-500 mb-1 block">Email Address</label><input type="email" value={emailAddr} onChange={e => setEmailAddr(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-2 text-sm" placeholder="john@company.com" /></div>
+                                    <div className="md:col-span-4 flex gap-2">
+                                        <button onClick={() => handleAddEmail('emailTo')} className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center justify-center gap-2"><Plus size={16}/> Add to "To"</button>
+                                        <button onClick={() => handleAddEmail('emailCc')} className="flex-1 bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded text-sm font-medium flex items-center justify-center gap-2"><Plus size={16}/> Add to "CC"</button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div>
+                                        <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 text-green-700"><Send size={18}/> Send To (Main)</h3>
+                                        <div className="border border-slate-100 rounded-lg overflow-hidden bg-white"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 text-xs uppercase"><tr><th className="px-3 py-2">Name / Position</th><th className="px-3 py-2">Email</th><th className="px-2 py-2"></th></tr></thead><tbody className="divide-y divide-slate-100">{(activeProject?.emailTo || []).map((item, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-3 py-2"><div className="font-medium text-slate-800">{item.name}</div><div className="text-xs text-slate-400">{item.position}</div></td><td className="px-3 py-2 text-slate-600 break-all">{item.email}</td><td className="px-2 py-2 text-right"><button onClick={() => removeItemFromProject('emailTo', idx)} className="text-slate-300 hover:text-red-500"><X size={14} /></button></td></tr>))}</tbody></table></div>
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2 text-slate-600"><FileText size={18}/> CC (Carbon Copy)</h3>
+                                        <div className="border border-slate-100 rounded-lg overflow-hidden bg-white"><table className="w-full text-sm text-left"><thead className="bg-slate-50 text-slate-500 text-xs uppercase"><tr><th className="px-3 py-2">Name / Position</th><th className="px-3 py-2">Email</th><th className="px-2 py-2"></th></tr></thead><tbody className="divide-y divide-slate-100">{(activeProject?.emailCc || []).map((item, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-3 py-2"><div className="font-medium text-slate-800">{item.name}</div><div className="text-xs text-slate-400">{item.position}</div></td><td className="px-3 py-2 text-slate-600 break-all">{item.email}</td><td className="px-2 py-2 text-right"><button onClick={() => removeItemFromProject('emailCc', idx)} className="text-slate-300 hover:text-red-500"><X size={14} /></button></td></tr>))}</tbody></table></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {activeSection === 'users' && userRole === 'admin' && (
+                            <UserManagement userRole={userRole} />
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [projects, setProjects] = useState([]);
+      const [reports, setReports] = useState([]);
+      const [reportToEdit, setReportToEdit] = useState(null);
+      const [initializing, setInitializing] = useState(true);
+
+      useEffect(() => {
+          // 1. Get Login Status
+          google.script.run.withSuccessHandler((userData) => {
+              setUser(userData);
+              
+              // 2. Fetch Initial Data (Projects & Reports)
+              google.script.run.withSuccessHandler((data) => {
+                  if (data) {
+                      setProjects(data.projects || []);
+                      setReports(data.reports || []);
+                  }
+                  setInitializing(false);
+              }).getInitialData(); // Make sure this function exists in Code.gs
+
+          }).getLoginStatus();
+      }, []);
+
+      const handleSendReport = (data, editingReport, onSuccess) => {
+          let updatedReport = null;
+          const targetStatus = data.status; 
+
+          if (editingReport) {
+              if (editingReport.status === 'Sent') {
+                  const newVersion = editingReport.version + 1;
+                  updatedReport = { ...editingReport, id: Date.now(), date: data.date, version: newVersion, status: targetStatus, data: data };
+              } else {
+                  updatedReport = { ...editingReport, data: data, date: data.date, docNo: data.docNo, status: targetStatus };
+              }
+          } else {
+              updatedReport = { id: Date.now(), docNo: data.docNo, date: data.date, project: data.project, status: targetStatus, version: 1, data: data };
+          }
+
+          google.script.run.withSuccessHandler((response) => {
+              if (editingReport && editingReport.status !== 'Sent') { setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); } 
+              else { setReports(prev => [updatedReport, ...prev]); }
+              setReportToEdit(null);
+              setActiveTab('history');
+              
+              if (response && response.url) {
+                  window.open(response.url, "_blank");
+              }
+              if (onSuccess) onSuccess();
+          }).saveReportToSheet(updatedReport); 
+      };
+
+      const handleSaveSettings = (newProjects) => { 
+          const projectsToSave = newProjects.map(p => ({
+              id: p.id, name: p.name, code: p.code, logo: p.logo,
+              equipmentList: p.equipmentList, manpowerList: p.manpowerList,
+              emailTo: p.emailTo, emailCc: p.emailCc
+          }));
+          
+          projectsToSave.forEach(p => google.script.run.saveProjectSettings(p));
+      };
+      
+      const startEditReport = (report) => { setReportToEdit(report); setActiveTab('create'); };
+
+      if (initializing) return <div className="flex h-screen items-center justify-center text-slate-500 flex-col gap-4"><div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>Loading System...</div>;
+      
+      if (!user) return <div className="flex h-screen items-center justify-center text-red-500">Authentication Failed. Please reload.</div>;
+
+      return (
+        <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900">
+          <div className="fixed top-4 left-4 z-30 md:hidden"><button className="p-2 bg-slate-900 text-white rounded shadow-lg"><Menu /></button></div>
+          <Sidebar activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); if(tab !== 'create') setReportToEdit(null); }} user={user} />
+          <main className="flex-1 md:ml-64 p-8 overflow-y-auto h-screen">
+            {activeTab === 'dashboard' && <Dashboard reports={reports} projects={projects} />}
+            {activeTab === 'create' && (<CreateReport user={user} projects={projects} reports={reports} reportToEdit={reportToEdit} onSend={handleSendReport} />)}
+            {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} />}
+            {activeTab === 'settings' && (<SettingsPanel projects={projects} setProjects={setProjects} onSaveSettings={handleSaveSettings} userRole={user.role} />)}
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

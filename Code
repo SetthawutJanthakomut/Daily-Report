@@ -1,35 +1,48 @@
+// ==========================================
+// Configuration
+// ==========================================
+const CONFIG = {
+  TEMPLATE_ID: "14VvXqCgBhPMWt-O7mdAZsjXgAbgJu969oyoPqb8g6uU",
+  PDF_FOLDER_ID: "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ",
+  PHOTO_FOLDER_ID: "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ",
+  LOGO_FOLDER_ID: "1wYPULSOCzlArSCPCe7NPYI7B5Q9pI8ve"
+};
+
+// ==========================================
+// Main Entry Point
+// ==========================================
 function doGet(e) {
-  // ถ้าเข้าลิงก์เว็บแล้วต่อท้ายด้วย ?page=settings ให้เปิดหน้า Settings
   if (e.parameter.page == 'settings') {
     return HtmlService.createTemplateFromFile('ProjectSettings').evaluate();
   }
-  
-  // ถ้าปกติให้เปิดหน้า React App
-  return HtmlService.createTemplateFromFile('index').evaluate(); // หรือชื่อไฟล์หลักของคุณ
+  return HtmlService.createTemplateFromFile('index').evaluate();
 }
+
+// ==========================================
+// Data Loading
+// ==========================================
 function getInitialData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  // 1. Read Projects
+  // Load Projects
   const projectSheet = ss.getSheetByName('Projects');
   const projectRows = projectSheet.getDataRange().getValues();
   const projects = [];
+  
   for (let i = 1; i < projectRows.length; i++) {
     const r = projectRows[i];
     if (r[0] === '') continue;
 
-    // --- ส่วนที่เพิ่ม: แปลง ID เป็น URL ---
-    let logoUrl = r[3]; // ค่าเดิมจาก Sheet (ID หรือ URL)
-    // ถ้ามีค่า และไม่ได้ขึ้นต้นด้วย http (คือเป็น ID เพียวๆ) ให้เติม prefix ของ Drive
+    let logoUrl = r[3];
     if (logoUrl && !logoUrl.startsWith('http') && !logoUrl.startsWith('data:')) {
-      // ใช้ลิงก์แบบ thumbnail จะโหลดเร็วกว่า
       logoUrl = "https://drive.google.com/thumbnail?id=" + logoUrl + "&sz=w1000";
     }
-    // ----------------------------------
 
     projects.push({
-      id: r[0], name: r[1], code: r[2], 
-      logo: logoUrl, // ส่งค่า URL ที่แปลงแล้วไป
+      id: r[0],
+      name: r[1],
+      code: r[2],
+      logo: logoUrl,
       equipmentList: JSON.parse(r[4] || '[]'),
       manpowerList: JSON.parse(r[5] || '[]'),
       emailTo: JSON.parse(r[6] || '[]'),
@@ -37,7 +50,7 @@ function getInitialData() {
     });
   }
 
-  // 2. Read Reports (เหมือนเดิม)
+  // Load Reports
   const reportSheet = ss.getSheetByName('Reports');
   const reportRows = reportSheet.getDataRange().getValues();
   const reports = [];
@@ -45,95 +58,103 @@ function getInitialData() {
   for (let i = 1; i < reportRows.length; i++) {
     const r = reportRows[i];
     if (r[0] === '') continue;
+    
     reports.push({
-      id: r[0], 
-      docNo: r[1], 
+      id: r[0],
+      docNo: r[1],
       date: Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), "yyyy-MM-dd"),
-      project: Number(r[3]), 
-      status: r[4], 
+      project: Number(r[3]),
+      status: r[4],
       version: Number(r[5]),
       data: JSON.parse(r[6] || '{}'),
-      pdfUrl: r[7] || '' 
+      pdfUrl: r[7] || ''
     });
   }
 
   return { projects, reports };
 }
 
+// ==========================================
+// PDF Generation - หัวใจหลัก
+// ==========================================
 function createPdfBlob(reportData, projectData) {
-  // --- 1. ตั้งค่า ID ---
-  // ใส่ ID ไฟล์ Google Docs Template ที่คุณสร้าง
-  const TEMPLATE_ID = "14VvXqCgBhPMWt-O7mdAZsjXgAbgJu969oyoPqb8g6uU"; 
-  
-  // ป้องกัน Error กรณีไม่มีข้อมูล Project
   if (!projectData) projectData = { name: "Unknown Project" };
 
   try {
-    // --- 2. สร้างไฟล์ชั่วคราว ---
-    const tempFile = DriveApp.getFileById(TEMPLATE_ID).makeCopy("TEMP_" + reportData.docNo);
+    Logger.log("Starting PDF generation for: " + reportData.docNo);
+    
+    // 1. Copy template
+    const tempFile = DriveApp.getFileById(CONFIG.TEMPLATE_ID).makeCopy("TEMP_" + reportData.docNo + "_" + new Date().getTime());
     const tempDoc = DocumentApp.openById(tempFile.getId());
     const body = tempDoc.getBody();
 
-    // --- 3. แทนที่ข้อมูลส่วนหัว ---
+    // 2. Replace header info
     body.replaceText("{{DocNo}}", reportData.docNo || "-");
     body.replaceText("{{Date}}", reportData.date || "-");
     body.replaceText("{{ProjectName}}", projectData.name || "-");
 
-    // --- 4. ฟังก์ชันเติมตาราง (Helper) ---
+    // 3. Helper function for table replacement
     const replaceTableRows = (body, marker, dataArray, mapFunction) => {
       const searchResult = body.findText(marker);
       if (searchResult) {
         const element = searchResult.getElement();
         let row = element.getParent().getParent();
+        
         if (row.getType() === DocumentApp.ElementType.TABLE_ROW) {
           const table = row.getParent();
           const rowIndex = table.getChildIndex(row);
           
           if (dataArray && dataArray.length > 0) {
+            // Insert data rows
             dataArray.forEach(item => {
               const newRow = row.copy();
               mapFunction(newRow, item);
               table.insertRow(rowIndex + 1, newRow);
             });
-            table.removeRow(rowIndex); // ลบแถวต้นฉบับทิ้ง
+            // Remove template row
+            table.removeRow(rowIndex);
           } else {
+            // No data case
             row.asTableRow().getCell(0).setText("- ไม่มีข้อมูล -");
+            for (let i = 1; i < row.asTableRow().getNumCells(); i++) {
+              row.asTableRow().getCell(i).setText("-");
+            }
           }
         }
       }
     };
 
-    // --- 5. เติมข้อมูลลงตาราง ---
-    
-    // 5.1 Equipment
+    // 4. Fill Equipment
     replaceTableRows(body, "{{Eq_Name}}", reportData.equipment, (row, item) => {
       row.replaceText("{{Eq_Name}}", item.name || "-");
       row.replaceText("{{Eq_Qty}}", (item.qty || "0").toString());
     });
 
-    // 5.2 Manpower
+    // 5. Fill Manpower
     replaceTableRows(body, "{{Mp_Pos}}", reportData.manpower, (row, item) => {
       row.replaceText("{{Mp_Pos}}", item.position || "-");
       row.replaceText("{{Mp_Qty}}", (item.qty || "0").toString());
     });
 
-    // 5.3 Weather
+    // 6. Fill Weather
     replaceTableRows(body, "{{We_Time}}", reportData.weather, (row, item) => {
       row.replaceText("{{We_Time}}", item.timeRange || "-");
       row.replaceText("{{We_Cond}}", item.condition || "-");
+      row.replaceText("{{We_Wind}}", item.windSpeed || "-");
     });
 
-    // 5.4 Activities
+    // 7. Fill Activities
     replaceTableRows(body, "{{Act_Item}}", reportData.activities, (row, item) => {
       row.replaceText("{{Act_Item}}", item.item || "-");
       row.replaceText("{{Act_Qty}}", (item.qty || "").toString());
       row.replaceText("{{Act_Unit}}", item.unit || "");
       row.replaceText("{{Act_Desc}}", item.activity || "-");
       row.replaceText("{{Act_Loc}}", item.location || "-");
+      row.replaceText("{{Act_Prob}}", item.problem || "-");
       row.replaceText("{{Act_Rem}}", item.remark || "-");
     });
 
-    // 5.5 Lookahead
+    // 8. Fill Lookahead
     replaceTableRows(body, "{{Look_Item}}", reportData.lookahead, (row, item) => {
       row.replaceText("{{Look_Item}}", item.item || "-");
       row.replaceText("{{Look_Qty}}", (item.qty || "").toString());
@@ -143,154 +164,222 @@ function createPdfBlob(reportData, projectData) {
       row.replaceText("{{Look_Rem}}", item.remark || "-");
     });
 
-    // --- 6. จัดการรูปภาพ (Photo Report) ---
+    // 9. Handle Photos
     const photoMarker = body.findText("{{PhotoSection}}");
     if (photoMarker) {
       const photoPara = photoMarker.getElement().getParent().asParagraph();
-      photoPara.setText(""); // ลบตัวแปรทิ้ง
+      photoPara.setText("");
 
       const photos = reportData.photos || [];
-      photos.forEach(p => {
-        try {
-          if (p.base64) {
-            // ดึง ID จาก URL
-            let imgId = null;
-            if (p.base64.indexOf("id=") > -1) {
-               imgId = p.base64.split("id=")[1].split("&")[0];
-            } else if (p.base64.indexOf("/d/") > -1) {
-               imgId = p.base64.split("/d/")[1].split("/")[0];
-            }
+      
+      if (photos.length > 0) {
+        photos.forEach((p, index) => {
+          try {
+            if (p.base64) {
+              let imgId = null;
+              
+              // Extract image ID from URL
+              if (p.base64.indexOf("id=") > -1) {
+                imgId = p.base64.split("id=")[1].split("&")[0];
+              } else if (p.base64.indexOf("/d/") > -1) {
+                imgId = p.base64.split("/d/")[1].split("/")[0];
+              }
 
-            if (imgId) {
-              const imgBlob = DriveApp.getFileById(imgId).getBlob();
-              const img = photoPara.appendInlineImage(imgBlob);
-              img.setWidth(300); // ปรับความกว้างรูป (px)
-              img.setHeight(225); // ปรับความสูงรูป (px)
-              photoPara.appendText("\n" + (p.desc || "") + "\n\n");
+              if (imgId) {
+                const imgBlob = DriveApp.getFileById(imgId).getBlob();
+                const img = photoPara.appendInlineImage(imgBlob);
+                img.setWidth(300);
+                img.setHeight(225);
+                
+                // Add description
+                photoPara.appendText("\n");
+                const descText = photoPara.appendText((p.desc || "Photo " + (index + 1)));
+                descText.setBold(true);
+                photoPara.appendText("\n\n");
+              }
             }
+          } catch (e) {
+            Logger.log("Image Skip: " + e.toString());
+            photoPara.appendText("\n[รูปภาพโหลดไม่ได้: " + (p.desc || "Photo " + (index + 1)) + "]\n");
           }
-        } catch (e) {
-          console.warn("Image Skip: " + e.toString());
-          photoPara.appendText("\n[รูปภาพโหลดไม่ได้: " + (p.desc||"") + "]\n");
-        }
-      });
+        });
+      } else {
+        photoPara.appendText("- ไม่มีรูปภาพ -");
+      }
     }
 
-    // --- 7. บันทึกและส่งออก PDF ---
+    // 10. Save and convert to PDF
     tempDoc.saveAndClose();
     const pdfBlob = tempFile.getAs(MimeType.PDF).setName(reportData.docNo + ".pdf");
     
-    // ลบไฟล์ Doc ชั่วคราวทิ้ง
+    // Clean up temp file
     tempFile.setTrashed(true);
     
+    Logger.log("PDF generated successfully");
     return pdfBlob;
 
   } catch (e) {
-    // ถ้า Error ให้แจ้งเตือนใน Log และโยน Error กลับไปให้หน้าเว็บรู้
     Logger.log("Critical Error in createPdfBlob: " + e.toString());
     throw new Error("สร้าง PDF ไม่สำเร็จ: " + e.toString());
   }
 }
 
+// ==========================================
+// Email Sending
+// ==========================================
 function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl) {
-  const toList = (projectData.emailTo || []).map(e => e.email).filter(e => e).join(',');
-  const ccList = (projectData.emailCc || []).map(e => e.email).filter(e => e).join(',');
-  
-  if (!toList) {
-    console.log("No recipient email found for this project.");
-    return;
+  try {
+    const toList = (projectData.emailTo || []).map(e => e.email).filter(e => e).join(',');
+    const ccList = (projectData.emailCc || []).map(e => e.email).filter(e => e).join(',');
+    
+    if (!toList) {
+      Logger.log("No recipient email found for this project.");
+      return { success: false, message: "No recipient email configured" };
+    }
+
+    // Build activity summary
+    let activitySummary = "";
+    if (reportData.activities && reportData.activities.length > 0) {
+      activitySummary = reportData.activities
+        .map(a => `<li>${a.activity || a.item} ${a.qty ? '(' + a.qty + ' ' + (a.unit || '') + ')' : ''}</li>`)
+        .join('');
+    } else {
+      activitySummary = "<li>ไม่มีกิจกรรม</li>";
+    }
+
+    const bodyHtml = `
+      <div style="font-family: 'Kanit', Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0;">
+          <h2 style="margin: 0; font-size: 24px;">📋 Daily Report Submission</h2>
+        </div>
+        
+        <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
+          <h3 style="color: #f97316; margin-top: 0;">รายงานประจำวัน: ${reportData.docNo}</h3>
+          
+          <table style="width: 100%; margin: 20px 0; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 10px; background: #f8fafc; font-weight: bold; width: 120px;">โครงการ:</td>
+              <td style="padding: 10px; background: #f8fafc;">${projectData.name}</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px; font-weight: bold;">วันที่:</td>
+              <td style="padding: 10px;">${reportData.date}</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px; background: #f8fafc; font-weight: bold;">สถานะ:</td>
+              <td style="padding: 10px; background: #f8fafc;"><span style="background: #10b981; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">SENT</span></td>
+            </tr>
+          </table>
+
+          <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <p style="margin: 0; color: #92400e; font-weight: bold;">📎 ไฟล์แนบ: ${reportData.docNo}.pdf</p>
+            <p style="margin: 5px 0 0 0; color: #92400e; font-size: 13px;">หรือดูออนไลน์: <a href="${pdfUrl}" style="color: #f97316; font-weight: bold;">คลิกที่นี่</a></p>
+          </div>
+
+          <h4 style="color: #334155; border-bottom: 2px solid #f97316; padding-bottom: 8px;">📊 สรุปกิจกรรมประจำวัน</h4>
+          <ul style="color: #475569; line-height: 1.8;">
+            ${activitySummary}
+          </ul>
+
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #94a3b8; font-size: 13px;">
+            <p style="margin: 0;">🤖 Auto-generated by Daily Report System v3.0</p>
+            <p style="margin: 5px 0 0 0;">Powered by Google Apps Script</p>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const emailOptions = {
+      to: toList,
+      subject: `[Daily Report] ${reportData.docNo} - ${reportData.date}`,
+      htmlBody: bodyHtml,
+      attachments: [pdfBlob]
+    };
+
+    if (ccList) {
+      emailOptions.cc = ccList;
+    }
+
+    MailApp.sendEmail(emailOptions);
+    
+    Logger.log("Email sent successfully to: " + toList);
+    return { success: true, message: "Email sent successfully" };
+
+  } catch (e) {
+    Logger.log("Email Error: " + e.toString());
+    return { success: false, message: "Email failed: " + e.toString() };
   }
-
-  const bodyHtml = `
-    <h3>Daily Report Submission: ${reportData.docNo}</h3>
-    <p><strong>Project:</strong> ${projectData.name}</p>
-    <p><strong>Date:</strong> ${reportData.date}</p>
-    <p>Attached is the Daily Report PDF. You can also view it online: <a href="${pdfUrl}">Click Here</a></p>
-    <hr/>
-    <b>Summary:</b><br/>
-    <ul>
-      ${reportData.activities.map(a => `<li>${a.activity} (${a.qty} ${a.unit})</li>`).join('')}
-    </ul>
-    <p><em>Auto-generated by Daily Report System</em></p>
-  `;
-
-  MailApp.sendEmail({
-    to: toList,
-    cc: ccList,
-    subject: `[DR] ${reportData.docNo} - ${reportData.date}`,
-    htmlBody: bodyHtml,
-    attachments: [pdfBlob]
-  });
 }
 
+// ==========================================
+// Save Report - Main Function
+// ==========================================
 function saveReportToSheet(reportObj) {
-  // --- ใส่ ID โฟลเดอร์ PDF ของคุณที่นี่ ---
-  var PDF_FOLDER_ID = "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ"; 
-  var PHOTO_FOLDER_ID = "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ"; // ใช้โฟลเดอร์เดียวกันเก็บรูป
-
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Reports');
     const data = sheet.getDataRange().getValues();
     
-    // [แก้จุดตาย 1] สร้างตัวแปร photos รอไว้ เผื่อไม่มีรูปจะได้ไม่ Error ตอนทำ PDF
+    // Initialize photos array
     if (!reportObj.data.photos) {
-       reportObj.data.photos = [];
+      reportObj.data.photos = [];
     }
 
-    // 1. วนลูปอัปโหลดรูปใน Activities
+    // 1. Upload photos from activities
     if (reportObj.data.activities) {
       reportObj.data.activities.forEach((act, idx) => {
         if (act.photos && act.photos.length > 0) {
           act.photos = act.photos.map((photo, pIdx) => {
-            // กรณีเป็นรูปใหม่ (Base64) -> อัปโหลด
+            // New photo (Base64)
             if (photo && photo.startsWith('data:')) {
-               var fileName = reportObj.docNo + "_act" + idx + "_p" + pIdx + ".jpg";
-               var fileId = uploadImageToDrive(photo, PHOTO_FOLDER_ID, fileName); // ฟังก์ชันนี้ return ID
-               
-               if (fileId) {
-                   // แปลง ID เป็น Link รูป เพื่อให้ PDF แสดงผลได้
-                   var fileUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
-                   
-                   // [แก้จุดตาย 1] เก็บเข้า list photos รวม เพื่อไปโชว์ใน PDF หน้า 2
-                   reportObj.data.photos.push({
-                       base64: fileUrl, 
-                       desc: (act.item || "Activity") + ": " + (act.activity || "")
-                   });
-                   
-                   return fileUrl; // คืนค่าเป็น URL เก็บลง Sheet (แทน Base64)
-               }
-               return null;
+              const fileName = reportObj.docNo + "_act" + idx + "_p" + pIdx + ".jpg";
+              const fileId = uploadImageToDrive(photo, CONFIG.PHOTO_FOLDER_ID, fileName);
+              
+              if (fileId) {
+                const fileUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
+                
+                // Add to photos collection for PDF
+                reportObj.data.photos.push({
+                  base64: fileUrl,
+                  desc: (act.item || "Activity " + (idx + 1)) + ": " + (act.activity || "")
+                });
+                
+                return fileUrl;
+              }
+              return null;
             }
-            // กรณีเป็นรูปเดิม (URL) อยู่แล้ว -> ก็ดึงมาใส่ list photos ด้วย
+            
+            // Existing photo (URL)
             if (photo && photo.startsWith('http')) {
-                 reportObj.data.photos.push({
-                       base64: photo,
-                       desc: (act.item || "Activity") + ": " + (act.activity || "")
-                 });
+              reportObj.data.photos.push({
+                base64: photo,
+                desc: (act.item || "Activity " + (idx + 1)) + ": " + (act.activity || "")
+              });
             }
-            return photo; 
-          });
+            return photo;
+          }).filter(p => p !== null);
         }
       });
     }
 
-    // 2. สร้าง PDF
-    const allProjects = getInitialData().projects; 
+    // 2. Generate PDF if status is 'Sent'
+    const allProjects = getInitialData().projects;
     const currentProject = allProjects.find(p => p.id == reportObj.project);
-    let pdfResult = { url: reportObj.pdfUrl || '' };
+    let pdfResult = { url: reportObj.pdfUrl || '', name: '' };
 
     if (reportObj.status === 'Sent' && currentProject) {
       try {
+        Logger.log("Creating PDF for report: " + reportObj.docNo);
+        
         const pdfBlob = createPdfBlob(reportObj.data, currentProject);
         
-        // [แก้จุดตาย 2] ระบุโฟลเดอร์ที่จะบันทึกไฟล์ (แทนการลง Root)
-        var folder;
+        // Save to folder
+        let folder;
         try {
-          folder = DriveApp.getFolderById(PDF_FOLDER_ID);
+          folder = DriveApp.getFolderById(CONFIG.PDF_FOLDER_ID);
         } catch(e) {
-          folder = DriveApp.getRootFolder(); // กันเหนียว ถ้าหาโฟลเดอร์ไม่เจอให้ลง Root
-          console.warn("Folder ID ผิด, บันทึกลง Root แทน");
+          Logger.log("Folder not found, using root");
+          folder = DriveApp.getRootFolder();
         }
 
         const file = folder.createFile(pdfBlob);
@@ -298,15 +387,19 @@ function saveReportToSheet(reportObj) {
         
         pdfResult = { url: file.getUrl(), name: file.getName() };
         
-        // ส่งเมล
-        sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url);
+        Logger.log("PDF saved: " + pdfResult.url);
+        
+        // 3. Send Email
+        const emailResult = sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url);
+        Logger.log("Email result: " + JSON.stringify(emailResult));
+        
       } catch (e) {
-        console.error("PDF/Email Error: " + e.toString());
-        // ไม่ throw error เพื่อให้ระบบบันทึกลง Sheet ต่อไปได้ (แต่ PDF จะไม่มี)
+        Logger.log("PDF/Email Error: " + e.toString());
+        // Continue to save to sheet even if PDF fails
       }
     }
 
-    // 3. บันทึกลง Google Sheet
+    // 4. Save to Google Sheet
     let rowToUpdate = -1;
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] == reportObj.id) {
@@ -332,174 +425,67 @@ function saveReportToSheet(reportObj) {
       sheet.appendRow(rowData);
     }
     
+    Logger.log("Report saved to sheet successfully");
     return { success: true, pdf: pdfResult };
     
   } catch (e) {
-    return { success: false, error: e.toString() }; 
+    Logger.log("Save Error: " + e.toString());
+    return { success: false, error: e.toString() };
   }
 }
 
-function saveProjectsToSheet(projects) {
-  // วนลูปเช็ค Logo ของทุก Project ถ้าเป็น Base64 ให้อัปโหลดก่อน
-  const processedProjects = projects.map(p => {
-    if (p.logo && p.logo.startsWith('data:')) {
-       // อัปโหลด Logo ลง Folder "DR_Logos"
-       p.logo = uploadImageToDrive(p.logo, "DR_Logos", "project_logo_" + p.code + ".jpg");
-    }
-    return p;
-  });
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Projects');
-  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).clearContent();
-  
-  const rows = processedProjects.map(p => [
-    p.id, p.name, p.code, p.logo, // ตอนนี้ logo จะเป็น URL สั้นๆ
-    JSON.stringify(p.equipmentList), JSON.stringify(p.manpowerList),
-    JSON.stringify(p.emailTo || []), JSON.stringify(p.emailCc || [])
-  ]);
-  
-  if (rows.length > 0) sheet.getRange(2, 1, rows.length, 8).setValues(rows);
-  return { success: true };
-}
-
-// ฟังก์ชันสำหรับแปลง Base64 และอัปโหลดลง Drive
+// ==========================================
+// Image Upload Helper
+// ==========================================
 function uploadImageToDrive(base64Data, folderId, fileName) {
   try {
     if (!base64Data) return null;
     
-    var split = base64Data.split('base64,');
-    if (split.length < 2) return base64Data; // ถ้าไม่ใช่ Base64 ให้คืนค่าเดิม
+    const split = base64Data.split('base64,');
+    if (split.length < 2) return base64Data;
 
-    var contentType = split[0].split(':')[1].split(';')[0];
-    var decoded = Utilities.base64Decode(split[1]);
-    var blob = Utilities.newBlob(decoded, contentType, fileName);
+    const contentType = split[0].split(':')[1].split(';')[0];
+    const decoded = Utilities.base64Decode(split[1]);
+    const blob = Utilities.newBlob(decoded, contentType, fileName);
     
-    // ดึง Folder จาก ID
-    var folder;
+    let folder;
     try {
       folder = DriveApp.getFolderById(folderId);
     } catch(e) {
-      throw new Error("หา Folder ไม่เจอ! กรุณาตรวจสอบ Folder ID: " + folderId);
+      throw new Error("Folder not found: " + folderId);
     }
     
-    var file = folder.createFile(blob);
-    // เปิดสิทธิ์ให้ใครก็ได้ที่มีลิงก์ดูรูปได้ (เพื่อให้แสดงใน PDF/Web ได้)
+    const file = folder.createFile(blob);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
+    Logger.log("Image uploaded: " + file.getId());
     return file.getId();
+    
   } catch (e) {
     Logger.log("Upload Error: " + e.toString());
     return null;
   }
 }
 
-function createDailyReportPDF(projectCodeOrName) { 
-  // สมมติว่ารับค่า projectCode หรือ Name เข้ามาเพื่อระบุว่าจะทำของโครงการไหน
-  // ถ้าไม่ได้ส่งมา อาจจะตั้งค่า Default ไว้
-  var targetProjectCode = projectCodeOrName || "TTT"; 
-
-  try {
-    var folderId = '1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ'; // โฟลเดอร์เก็บ PDF
-    
-    // --- 1. ดึงข้อมูลโครงการจาก Sheet "Projects" ---
-    var ss = SpreadsheetApp.getActiveSpreadsheet(); // หรือ openById ถ้าแยกไฟล์
-    var sheet = ss.getSheetByName("Projects");
-    var dataValues = sheet.getDataRange().getValues();
-    
-    var projectData = {};
-    var found = false;
-
-    // วนลูปหา Project ที่ตรงกัน (เริ่ม i=1 ข้ามหัวตาราง)
-    for (var i = 1; i < dataValues.length; i++) {
-      // เช็คจาก Column C (Code) หรือ Column B (Name)
-      if (dataValues[i][2] == targetProjectCode || dataValues[i][1] == targetProjectCode) {
-        projectData = {
-          id: dataValues[i][0],
-          name: dataValues[i][1],
-          code: dataValues[i][2],
-          logoId: dataValues[i][3], // Column D
-          equipList: dataValues[i][4],
-          manList: dataValues[i][5],
-          mailTo: dataValues[i][6],
-          mailCc: dataValues[i][7]
-        };
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) throw new Error("ไม่พบข้อมูลโครงการ: " + targetProjectCode);
-
-    // --- 2. แปลง Logo ID เป็น Base64 ---
-    var logoBase64 = null;
-    if (projectData.logoId) {
-      try {
-        var file = DriveApp.getFileById(projectData.logoId);
-        var blob = file.getBlob();
-        logoBase64 = "data:" + blob.getContentType() + ";base64," + Utilities.base64Encode(blob.getBytes());
-      } catch (e) {
-        Logger.log("Error loading logo: " + e);
-      }
-    }
-
-    // --- 3. เตรียม Data object สำหรับส่งเข้า HTML ---
-    var data = {
-      docNo: projectData.code + "-RPT-DR-" + Utilities.formatDate(new Date(), "GMT+7", "yyyyMMdd"),
-      date: Utilities.formatDate(new Date(), "GMT+7", "dd/MM/yyyy"),
-      logo: logoBase64, // ส่ง Logo ที่แปลงแล้วไป
-      projectName: projectData.name, // ส่งชื่อโครงการไป
-      // ... (ข้อมูล Manpower/Machine ดึงจาก Database จริง หรือ Mock ตามเดิมไปก่อน) ...
-      manpower: [ { name: "Staff", day: 0, night: 0 } ], // ตัวอย่าง
-      machines: [],
-      weather: [],
-      todayActivities: [],
-      lookaheadActivities: [],
-      photos: []
-    };
-
-    // --- 4. สร้าง PDF (เหมือนเดิม) ---
-    var htmlTemplate = HtmlService.createTemplateFromFile('ReportTemplate');
-    htmlTemplate.data = data;
-    var htmlContent = htmlTemplate.evaluate().getContent();
-    
-    var blob = Utilities.newBlob(htmlContent, MimeType.HTML).getAs(MimeType.PDF);
-    blob.setName("Daily_Report_" + data.docNo + ".pdf");
-    var folder = DriveApp.getFolderById(folderId);
-    var file = folder.createFile(blob);
-    
-    return file.getUrl();
-
-  } catch (e) {
-    return "Error: " + e.toString();
-  }
-}
-
 // ==========================================
-// API สำหรับหน้า System Settings - Projects Management
+// Project Settings Management
 // ==========================================
-
-// 1. ดึงข้อมูล Projects ทั้งหมดไปแสดงในตารางหน้าเว็บ
 function getProjectSettings() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Projects");
-  var data = sheet.getDataRange().getValues();
-  data.shift(); // เอาหัวตารางออก
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Projects");
+  const data = sheet.getDataRange().getValues();
+  data.shift();
   
-  // แปลง Array เป็น Object
-  var projects = data.map(function(row) {
-    
-    // --- ส่วนที่เพิ่ม: แปลง ID เป็น URL ---
+  const projects = data.map(function(row) {
     let logoUrl = row[3];
     if (logoUrl && !logoUrl.startsWith('http') && !logoUrl.startsWith('data:')) {
       logoUrl = "https://drive.google.com/thumbnail?id=" + logoUrl + "&sz=w1000";
     }
-    // ----------------------------------
 
     return {
       id: row[0],
       name: row[1],
       code: row[2],
-      logo: logoUrl, // ส่งค่า URL ที่แปลงแล้วไป
+      logo: logoUrl,
       equipmentList: row[4],
       manpowerList: row[5],
       mailTo: row[6],
@@ -509,65 +495,59 @@ function getProjectSettings() {
   
   return JSON.stringify(projects);
 }
-function saveProjectSettings(projectDataObj) {
-  var LOGO_FOLDER_ID = "1wYPULSOCzlArSCPCe7NPYI7B5Q9pI8ve"; // <--- อย่าลืมใส่ ID โฟลเดอร์เดิมของคุณ
 
+function saveProjectSettings(projectDataObj) {
   try {
-    // 1. จัดการรูปภาพ Logo
+    // Handle logo upload
     if (projectDataObj.logo && projectDataObj.logo.startsWith('data:')) {
-       var fileName = "logo_" + projectDataObj.code + "_" + new Date().getTime() + ".jpg";
-       var newLogoId = uploadImageToDrive(projectDataObj.logo, LOGO_FOLDER_ID, fileName);
-       if (newLogoId) {
-         projectDataObj.logo = newLogoId;
-       } else {
-         return "Error: อัปโหลดรูปไม่สำเร็จ";
-       }
+      const fileName = "logo_" + projectDataObj.code + "_" + new Date().getTime() + ".jpg";
+      const newLogoId = uploadImageToDrive(projectDataObj.logo, CONFIG.LOGO_FOLDER_ID, fileName);
+      if (newLogoId) {
+        projectDataObj.logo = newLogoId;
+      } else {
+        return "Error: อัปโหลดรูปไม่สำเร็จ";
+      }
     }
 
-    // 2. เตรียมข้อมูลลง Sheet
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Projects");
-    var data = sheet.getDataRange().getValues();
-    var rowIndex = -1;
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Projects");
+    const data = sheet.getDataRange().getValues();
+    let rowIndex = -1;
 
-    // หาแถวที่จะแก้ไข
-    for (var i = 1; i < data.length; i++) {
+    for (let i = 1; i < data.length; i++) {
       if (data[i][0] == projectDataObj.id) {
         rowIndex = i + 1;
         break;
       }
     }
 
-    // *** จุดสำคัญที่แก้ไข: ต้องใส่ JSON.stringify() สำหรับข้อมูลที่เป็น List/Array ***
-    var equipStr = JSON.stringify(projectDataObj.equipmentList || []);
-    var manStr = JSON.stringify(projectDataObj.manpowerList || []);
-    var mailToStr = JSON.stringify(projectDataObj.mailTo || []);
-    var mailCcStr = JSON.stringify(projectDataObj.mailCc || []);
+    const equipStr = JSON.stringify(projectDataObj.equipmentList || []);
+    const manStr = JSON.stringify(projectDataObj.manpowerList || []);
+    const mailToStr = JSON.stringify(projectDataObj.mailTo || []);
+    const mailCcStr = JSON.stringify(projectDataObj.mailCc || []);
 
     if (rowIndex > 0) {
-      // --- กรณีแก้ไข (Update) ---
+      // Update
       sheet.getRange(rowIndex, 2).setValue(projectDataObj.name);
       sheet.getRange(rowIndex, 3).setValue(projectDataObj.code);
       sheet.getRange(rowIndex, 4).setValue(projectDataObj.logo);
-      
-      // บันทึกข้อมูล List เป็น JSON String
-      sheet.getRange(rowIndex, 5).setValue(equipStr); 
+      sheet.getRange(rowIndex, 5).setValue(equipStr);
       sheet.getRange(rowIndex, 6).setValue(manStr);
       sheet.getRange(rowIndex, 7).setValue(mailToStr);
       sheet.getRange(rowIndex, 8).setValue(mailCcStr);
       
       return "อัปเดตข้อมูลเรียบร้อย";
     } else {
-      // --- กรณีเพิ่มใหม่ (Create) ---
-      var newId = data.length > 1 ? Number(data[data.length-1][0]) + 1 : 1;
+      // Create
+      const newId = data.length > 1 ? Number(data[data.length-1][0]) + 1 : 1;
       sheet.appendRow([
         newId,
         projectDataObj.name,
         projectDataObj.code,
         projectDataObj.logo,
-        equipStr,   // บันทึกเป็น JSON String
-        manStr,     // บันทึกเป็น JSON String
-        mailToStr,  // บันทึกเป็น JSON String
-        mailCcStr   // บันทึกเป็น JSON String
+        equipStr,
+        manStr,
+        mailToStr,
+        mailCcStr
       ]);
       return "เพิ่มโครงการใหม่เรียบร้อย";
     }
@@ -575,31 +555,50 @@ function saveProjectSettings(projectDataObj) {
     return "Error: " + e.toString();
   }
 }
-// ฟังก์ชันสำหรับเปิดหน้า Settings โดยเฉพาะ
-function openSettings() {
-  var template = HtmlService.createTemplateFromFile('ProjectSettings');
-  return template.evaluate()
-      .setTitle('System Settings')
-      .setSandboxMode(HtmlService.SandboxMode.IFRAME);
+
+function saveProjectsToSheet(projects) {
+  const processedProjects = projects.map(p => {
+    if (p.logo && p.logo.startsWith('data:')) {
+      p.logo = uploadImageToDrive(p.logo, CONFIG.LOGO_FOLDER_ID, "project_logo_" + p.code + ".jpg");
+    }
+    return p;
+  });
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Projects');
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).clearContent();
+  }
+  
+  const rows = processedProjects.map(p => [
+    p.id, p.name, p.code, p.logo,
+    JSON.stringify(p.equipmentList),
+    JSON.stringify(p.manpowerList),
+    JSON.stringify(p.emailTo || []),
+    JSON.stringify(p.emailCc || [])
+  ]);
+  
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, 8).setValues(rows);
+  }
+  return { success: true };
 }
 
 // ==========================================
-// 1. Authentication & Role Check
+// Authentication & User Management
 // ==========================================
-
 function getLoginStatus() {
-  var email = Session.getActiveUser().getEmail(); // ดึงเมลคนที่ล็อกอินอยู่
-  var role = 'visitor'; // ค่าเริ่มต้นถ้าไม่มีชื่อในระบบ
-  var name = 'Guest';
+  const email = Session.getActiveUser().getEmail();
+  let role = 'visitor';
+  let name = 'Guest';
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
-  var data = sheet.getDataRange().getValues();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
+  const data = sheet.getDataRange().getValues();
 
-  // วนลูปหาอีเมลใน Sheet Users (เริ่มบรรทัดที่ 2)
-  for (var i = 1; i < data.length; i++) {
+  for (let i = 1; i < data.length; i++) {
     if (data[i][0] == email) {
-      role = data[i][1]; // Column B
-      name = data[i][2]; // Column C
+      role = data[i][1];
+      name = data[i][2];
       break;
     }
   }
@@ -607,29 +606,22 @@ function getLoginStatus() {
   return { email: email, role: role, name: name };
 }
 
-// ==========================================
-// 2. User Management API (สำหรับ Admin)
-// ==========================================
-
 function getUsers() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
-  var data = sheet.getDataRange().getValues();
-  data.shift(); // เอาหัวตารางออก
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
+  const data = sheet.getDataRange().getValues();
+  data.shift();
   
-  // แปลงเป็น Object Array
   return data.map(function(row) {
     return { email: row[0], role: row[1], name: row[2] };
   });
 }
 
 function saveUser(userObj) {
-  // userObj = { email: "...", role: "...", name: "...", isNew: true/false }
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
-  var data = sheet.getDataRange().getValues();
-  var rowIndex = -1;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
+  const data = sheet.getDataRange().getValues();
+  let rowIndex = -1;
 
-  // เช็คว่ามีอีเมลนี้หรือยัง
-  for (var i = 1; i < data.length; i++) {
+  for (let i = 1; i < data.length; i++) {
     if (data[i][0] == userObj.email) {
       rowIndex = i + 1;
       break;
@@ -637,21 +629,19 @@ function saveUser(userObj) {
   }
 
   if (rowIndex > 0) {
-    // แก้ไข (Update)
     sheet.getRange(rowIndex, 2).setValue(userObj.role);
     sheet.getRange(rowIndex, 3).setValue(userObj.name);
     return "อัปเดตผู้ใช้งานเรียบร้อย";
   } else {
-    // เพิ่มใหม่ (Create)
     sheet.appendRow([userObj.email, userObj.role, userObj.name]);
     return "เพิ่มผู้ใช้งานใหม่เรียบร้อย";
   }
 }
 
 function deleteUser(email) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
-  var data = sheet.getDataRange().getValues();
-  for (var i = 1; i < data.length; i++) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users");
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
     if (data[i][0] == email) {
       sheet.deleteRow(i + 1);
       return "ลบผู้ใช้งานเรียบร้อย";

@@ -99,28 +99,58 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl) {
 }
 
 function saveReportToSheet(reportObj) {
+  // --- ใส่ ID โฟลเดอร์ PDF ของคุณที่นี่ ---
+  var PDF_FOLDER_ID = "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ"; 
+  var PHOTO_FOLDER_ID = "1Fr2FMFxV-yze68ZmdiEEIfbOlqlHKVgZ"; // ใช้โฟลเดอร์เดียวกันเก็บรูป
+
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Reports');
     const data = sheet.getDataRange().getValues();
     
-    // *** NEW: วนลูปอัปโหลดรูปใน Activities ก่อนบันทึก ***
-    // (เพื่อไม่ให้เก็บ base64 ยาวๆ ลง sheet)
+    // [แก้จุดตาย 1] สร้างตัวแปร photos รอไว้ เผื่อไม่มีรูปจะได้ไม่ Error ตอนทำ PDF
+    if (!reportObj.data.photos) {
+       reportObj.data.photos = [];
+    }
+
+    // 1. วนลูปอัปโหลดรูปใน Activities
     if (reportObj.data.activities) {
       reportObj.data.activities.forEach((act, idx) => {
         if (act.photos && act.photos.length > 0) {
           act.photos = act.photos.map((photo, pIdx) => {
-            if (photo.startsWith('data:')) {
-               // อัปโหลดลง Folder "DR_Photos"
-               return uploadImageToDrive(photo, "DR_Photos", reportObj.docNo + "_act" + idx + "_p" + pIdx + ".jpg");
+            // กรณีเป็นรูปใหม่ (Base64) -> อัปโหลด
+            if (photo && photo.startsWith('data:')) {
+               var fileName = reportObj.docNo + "_act" + idx + "_p" + pIdx + ".jpg";
+               var fileId = uploadImageToDrive(photo, PHOTO_FOLDER_ID, fileName); // ฟังก์ชันนี้ return ID
+               
+               if (fileId) {
+                   // แปลง ID เป็น Link รูป เพื่อให้ PDF แสดงผลได้
+                   var fileUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
+                   
+                   // [แก้จุดตาย 1] เก็บเข้า list photos รวม เพื่อไปโชว์ใน PDF หน้า 2
+                   reportObj.data.photos.push({
+                       base64: fileUrl, 
+                       desc: (act.item || "Activity") + ": " + (act.activity || "")
+                   });
+                   
+                   return fileUrl; // คืนค่าเป็น URL เก็บลง Sheet (แทน Base64)
+               }
+               return null;
             }
-            return photo; // ถ้าเป็น URL อยู่แล้วก็คืนค่าเดิม
+            // กรณีเป็นรูปเดิม (URL) อยู่แล้ว -> ก็ดึงมาใส่ list photos ด้วย
+            if (photo && photo.startsWith('http')) {
+                 reportObj.data.photos.push({
+                       base64: photo,
+                       desc: (act.item || "Activity") + ": " + (act.activity || "")
+                 });
+            }
+            return photo; 
           });
         }
       });
     }
 
-    // ... (Logic เดิม: เตรียม Project และ PDF) ...
+    // 2. สร้าง PDF
     const allProjects = getInitialData().projects; 
     const currentProject = allProjects.find(p => p.id == reportObj.project);
     let pdfResult = { url: reportObj.pdfUrl || '' };
@@ -128,19 +158,30 @@ function saveReportToSheet(reportObj) {
     if (reportObj.status === 'Sent' && currentProject) {
       try {
         const pdfBlob = createPdfBlob(reportObj.data, currentProject);
-        const file = DriveApp.createFile(pdfBlob);
+        
+        // [แก้จุดตาย 2] ระบุโฟลเดอร์ที่จะบันทึกไฟล์ (แทนการลง Root)
+        var folder;
+        try {
+          folder = DriveApp.getFolderById(PDF_FOLDER_ID);
+        } catch(e) {
+          folder = DriveApp.getRootFolder(); // กันเหนียว ถ้าหาโฟลเดอร์ไม่เจอให้ลง Root
+          console.warn("Folder ID ผิด, บันทึกลง Root แทน");
+        }
+
+        const file = folder.createFile(pdfBlob);
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         
         pdfResult = { url: file.getUrl(), name: file.getName() };
         
-        // ส่งเมล (Logic เดิม)
+        // ส่งเมล
         sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url);
       } catch (e) {
         console.error("PDF/Email Error: " + e.toString());
+        // ไม่ throw error เพื่อให้ระบบบันทึกลง Sheet ต่อไปได้ (แต่ PDF จะไม่มี)
       }
     }
 
-    // ... (Logic เดิม: บันทึกลง Sheet) ...
+    // 3. บันทึกลง Google Sheet
     let rowToUpdate = -1;
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] == reportObj.id) {
@@ -156,7 +197,7 @@ function saveReportToSheet(reportObj) {
       reportObj.project,
       reportObj.status,
       reportObj.version,
-      JSON.stringify(reportObj.data), // ตอนนี้ข้อมูลนี้จะมีแต่ URL สั้นๆ ไม่ใช่ Base64 ยาวๆ แล้ว
+      JSON.stringify(reportObj.data),
       pdfResult.url
     ];
 
@@ -169,12 +210,8 @@ function saveReportToSheet(reportObj) {
     return { success: true, pdf: pdfResult };
     
   } catch (e) {
-    return { success: false, error: e.toString() }; // ส่ง Error กลับไปบอก Frontend
+    return { success: false, error: e.toString() }; 
   }
-}
-// 3. ฟังก์ชันสำหรับขอสิทธิ์ (กด Run ตรงนี้ 1 ครั้ง)
-function testAuth() {
-  console.log("App Authorised");
 }
 
 function saveProjectsToSheet(projects) {

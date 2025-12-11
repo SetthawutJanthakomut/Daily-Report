@@ -31,6 +31,37 @@
     .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ใส่ต่อท้ายในแท็ก style */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-content {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+.history-item {
+  border-left: 3px solid #f97316;
+  padding-left: 10px;
+  margin-bottom: 15px;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+.history-time { font-size: 12px; color: #888; }
+.history-user { font-weight: bold; font-size: 14px; color: #333; }
+.history-action { font-size: 14px; color: #555; }
   </style>
 </head>
 <body>
@@ -90,6 +121,7 @@
     const Filter = (p) => <Icon name="filter" {...p} />;
     const Cloud = (p) => <Icon name="cloud" {...p} />;
     const UserPlus = (p) => <Icon name="user-plus" {...p} />;
+    const RefreshCw = (p) => <Icon name="refresh-cw" {...p} />;
 
     // --- Role Logic ---
     const checkRole = (userRole, allowedRoles) => {
@@ -242,6 +274,10 @@
 
     // --- Create Report ---
     const CreateReport = ({ user, projects, reports, reportToEdit, onSave, onSend }) => {
+    const autoResize = (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = e.target.scrollHeight + 'px';
+  };
       const [selectedProject, setSelectedProject] = useState(projects.length > 0 ? projects[0] : null);
        
       const [formData, setFormData] = useState({
@@ -454,100 +490,172 @@
             </div>
           </div>
 
-          {/* Activities Table */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100">
-            <div className="bg-slate-800 text-white px-6 py-3 rounded-t-xl flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Briefcase size={18}/> Today Work Activities</h3><button onClick={() => addRow('activities')} className="text-xs bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button></div>
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
-                        <tr>
-                            <th className="px-4 py-3 w-16 text-center">Process</th>
-                            <th className="px-4 py-3 min-w-[120px]">Item</th>
-                            <th className="px-4 py-3 w-16">Qty</th>
-                            <th className="px-4 py-3 w-16">Unit</th>
-                            <th className="px-4 py-3 min-w-[200px]">Activity Description</th>
-                            <th className="px-4 py-3 min-w-[100px]">Location</th>
-                            <th className="px-4 py-3 min-w-[120px]">Problem</th>
-                            <th className="px-4 py-3 min-w-[120px]">Remark</th>
-                            <th className="px-4 py-3 min-w-[100px]">Photos</th>
-                            <th className="px-2 py-3"></th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {formData.activities.map((act, idx) => (
-                            <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
-                                <td className="px-4 py-2 text-center text-slate-500 font-medium">{idx + 1}</td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.item} onChange={e => updateRow('activities', idx, 'item', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('activities', idx, 'qty', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('activities', idx, 'unit', e.target.value)} /></td>
-                                <td className="px-4 py-2"><textarea rows={1} className="w-full bg-transparent outline-none resize-none" defaultValue={act.activity} onChange={e => updateRow('activities', idx, 'activity', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.location} onChange={e => updateRow('activities', idx, 'location', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-red-500" defaultValue={act.problem} onChange={e => updateRow('activities', idx, 'problem', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.remark} onChange={e => updateRow('activities', idx, 'remark', e.target.value)} /></td>
-                                <td className="px-4 py-2 text-center">
-                                    <div className="flex flex-col items-center gap-2">
-                                        <input type="file" accept="image/*" id={`photo-upload-${idx}`} className="hidden" onChange={(e) => handlePhotoSelect(e, idx)} />
-                                        <label htmlFor={`photo-upload-${idx}`} className="cursor-pointer text-slate-400 hover:text-orange-500 bg-slate-50 hover:bg-orange-50 p-1.5 rounded-full transition-colors inline-flex"><ImageIcon size={16} /></label>
-                                        {act.photos.length > 0 && (
-                                            <div className="flex flex-wrap gap-1 justify-center mt-1 w-24">
-                                                {act.photos.map((photo, photoIdx) => (
-                                                    <div key={photoIdx} className="relative group/photo w-8 h-8">
-                                                        <img src={photo} alt="Thumb" className="w-full h-full object-cover rounded border border-slate-200" />
-                                                        <button onClick={() => handleRemovePhoto(idx, photoIdx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/photo:opacity-100 transition-opacity"><X size={8} /></button>
-                                                    </div>
-                                                ))}
+          {/* --- ส่วน Today Work Activities (แก้ไขแล้ว) --- */}
+<div className="bg-white rounded-xl shadow-sm border border-slate-100">
+    <div className="bg-slate-800 text-white px-6 py-3 rounded-t-xl flex justify-between items-center">
+        <h3 className="font-bold flex items-center gap-2"><Briefcase size={18}/> Today Work Activities</h3>
+        <button onClick={() => addRow('activities')} className="text-xs bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button>
+    </div>
+    <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left">
+            <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                <tr>
+                    <th className="px-4 py-3 w-12 text-center">No.</th>
+                    <th className="px-4 py-3 min-w-[150px]">Item</th> {/* ขยายกว้างขึ้น */}
+                    <th className="px-4 py-3 w-16">Qty</th>
+                    <th className="px-4 py-3 w-16">Unit</th>
+                    <th className="px-4 py-3 min-w-[250px]">Description</th> {/* ขยายกว้างขึ้น */}
+                    <th className="px-4 py-3 min-w-[120px]">Location</th>
+                    <th className="px-4 py-3 min-w-[150px]">Problem</th>
+                    <th className="px-4 py-3 min-w-[150px]">Remark</th>
+                    <th className="px-4 py-3 text-center">Photos</th>
+                    <th className="px-2 py-3"></th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+                {formData.activities.map((act, idx) => (
+                    <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
+                        <td className="px-4 py-2 text-center text-slate-500 pt-3">{idx + 1}</td>
+                        
+                        {/* เปลี่ยนเป็น Textarea เพื่อให้ขยายได้ */}
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-orange-300" 
+                                defaultValue={act.item} 
+                                onChange={e => updateRow('activities', idx, 'item', e.target.value)} 
+                                onInput={autoResize} // ใส่คำสั่งขยาย
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('activities', idx, 'qty', e.target.value)} /></td>
+                        <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('activities', idx, 'unit', e.target.value)} /></td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-orange-300" 
+                                defaultValue={act.activity} 
+                                onChange={e => updateRow('activities', idx, 'activity', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-orange-300" 
+                                defaultValue={act.location} 
+                                onChange={e => updateRow('activities', idx, 'location', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden text-red-500 border-b border-transparent focus:border-red-300" 
+                                defaultValue={act.problem} 
+                                onChange={e => updateRow('activities', idx, 'problem', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-orange-300" 
+                                defaultValue={act.remark} 
+                                onChange={e => updateRow('activities', idx, 'remark', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+
+                        <td className="px-4 py-2 text-center">
+                            {/* ... (ส่วนรูปภาพคงเดิม) ... */}
+                             <div className="flex flex-col items-center gap-2">
+                                <input type="file" accept="image/*" id={`photo-upload-${idx}`} className="hidden" onChange={(e) => handlePhotoSelect(e, idx)} />
+                                <label htmlFor={`photo-upload-${idx}`} className="cursor-pointer text-slate-400 hover:text-orange-500 bg-slate-50 hover:bg-orange-50 p-1.5 rounded-full transition-colors inline-flex"><ImageIcon size={16} /></label>
+                                {act.photos.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 justify-center mt-1 w-24">
+                                        {act.photos.map((photo, photoIdx) => (
+                                            <div key={photoIdx} className="relative group/photo w-8 h-8">
+                                                <img src={photo} alt="Thumb" className="w-full h-full object-cover rounded border border-slate-200" />
+                                                <button onClick={() => handleRemovePhoto(idx, photoIdx)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/photo:opacity-100 transition-opacity"><X size={8} /></button>
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
-                                </td>
-                                <td className="px-2 py-2 text-center"><button onClick={() => removeRow('activities', idx)} className="text-slate-300 hover:text-red-500 pt-1"><Trash2 size={14} /></button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-          </div>
+                                )}
+                            </div>
+                        </td>
+                        <td className="px-2 py-2 text-center align-middle"><button onClick={() => removeRow('activities', idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button></td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </div>
+</div>
 
-          {/* Lookahead Table */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-100">
-            <div className="bg-slate-700 text-white px-6 py-3 rounded-t-xl flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Eye size={18}/> Daily Lookahead (Next Day Plan)</h3><button onClick={() => addRow('lookahead')} className="text-xs bg-slate-500 hover:bg-slate-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button></div>
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
-                        <tr>
-                            <th className="px-4 py-3 w-16 text-center">Process</th>
-                            <th className="px-4 py-3 min-w-[120px]">Item</th>
-                            <th className="px-4 py-3 w-16">Qty</th>
-                            <th className="px-4 py-3 w-16">Unit</th>
-                            <th className="px-4 py-3 min-w-[200px]">Activity Description</th>
-                            <th className="px-4 py-3 min-w-[100px]">Location</th>
-                            <th className="px-4 py-3 min-w-[120px]">Remark</th>
-                            <th className="px-2 py-3"></th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {formData.lookahead.map((act, idx) => (
-                            <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
-                                <td className="px-4 py-2 text-center text-slate-500 font-medium">{idx + 1}</td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.item} onChange={e => updateRow('lookahead', idx, 'item', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('lookahead', idx, 'qty', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('lookahead', idx, 'unit', e.target.value)} /></td>
-                                <td className="px-4 py-2"><textarea rows={1} className="w-full bg-transparent outline-none resize-none" defaultValue={act.activity} onChange={e => updateRow('lookahead', idx, 'activity', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.location} onChange={e => updateRow('lookahead', idx, 'location', e.target.value)} /></td>
-                                <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none" defaultValue={act.remark} onChange={e => updateRow('lookahead', idx, 'remark', e.target.value)} /></td>
-                                <td className="px-2 py-2 text-center"><button onClick={() => removeRow('lookahead', idx)} className="text-slate-300 hover:text-red-500 pt-1"><Trash2 size={14} /></button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-          </div>
+{/* --- ส่วน Daily Lookahead (แก้ไขแล้ว) --- */}
+<div className="bg-white rounded-xl shadow-sm border border-slate-100">
+    <div className="bg-slate-700 text-white px-6 py-3 rounded-t-xl flex justify-between items-center">
+        <h3 className="font-bold flex items-center gap-2"><Eye size={18}/> Daily Lookahead (Next Day Plan)</h3>
+        <button onClick={() => addRow('lookahead')} className="text-xs bg-slate-500 hover:bg-slate-600 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={14} /> Add Row</button>
+    </div>
+    <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left">
+            <thead className="text-xs text-slate-500 bg-slate-50 uppercase">
+                <tr>
+                    <th className="px-4 py-3 w-12 text-center">No.</th>
+                    <th className="px-4 py-3 min-w-[150px]">Item</th>
+                    <th className="px-4 py-3 w-16">Qty</th>
+                    <th className="px-4 py-3 w-16">Unit</th>
+                    <th className="px-4 py-3 min-w-[250px]">Description</th>
+                    <th className="px-4 py-3 min-w-[120px]">Location</th>
+                    <th className="px-4 py-3 min-w-[150px]">Remark</th>
+                    <th className="px-2 py-3"></th>
+                </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+                {formData.lookahead.map((act, idx) => (
+                    <tr key={idx} className="bg-white hover:bg-slate-50 align-top">
+                        <td className="px-4 py-2 text-center text-slate-500 pt-3">{idx + 1}</td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-blue-300" 
+                                defaultValue={act.item} 
+                                onChange={e => updateRow('lookahead', idx, 'item', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.qty} onChange={e => updateRow('lookahead', idx, 'qty', e.target.value)} /></td>
+                        <td className="px-4 py-2"><input type="text" className="w-full bg-transparent outline-none text-center" defaultValue={act.unit} onChange={e => updateRow('lookahead', idx, 'unit', e.target.value)} /></td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-blue-300" 
+                                defaultValue={act.activity} 
+                                onChange={e => updateRow('lookahead', idx, 'activity', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-blue-300" 
+                                defaultValue={act.location} 
+                                onChange={e => updateRow('lookahead', idx, 'location', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-4 py-2">
+                            <textarea rows={1} className="w-full bg-transparent outline-none resize-none overflow-hidden border-b border-transparent focus:border-blue-300" 
+                                defaultValue={act.remark} 
+                                onChange={e => updateRow('lookahead', idx, 'remark', e.target.value)} 
+                                onInput={autoResize} 
+                            />
+                        </td>
+                        
+                        <td className="px-2 py-2 text-center align-middle"><button onClick={() => removeRow('lookahead', idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button></td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </div>
+</div>
 
-        </div>
-      );
-    };
-
-    const ReportList = ({ reports, projects, onEdit }) => (
+// --- ReportList Component (Fixed History Button) ---
+    const ReportList = ({ reports, projects, onEdit, onViewHistory }) => (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end"><h2 className="text-2xl font-bold text-slate-800">History & Sent Reports</h2></div>
             <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
@@ -575,12 +683,20 @@
                                 <td className="px-6 py-4 text-slate-500">{report.date}</td>
                                 <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
                                 <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                    {/* ปุ่มดู PDF */}
+                                    
+                                    {/* ✅ ปุ่ม History (แก้ไขแล้ว) */}
+                                    <button onClick={() => onViewHistory(report)} className="text-slate-400 hover:text-orange-500 flex items-center gap-1 transition-colors mr-2">
+                                        <History size={16} /> <span className="text-xs group-hover:underline">History</span>
+                                    </button>
+
+                                    {/* ปุ่ม PDF */}
                                     {report.pdfUrl && (
-                                        <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2" title="Open PDF">
+                                        <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2">
                                             <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
                                         </a>
                                     )}
+                                    
+                                    {/* ปุ่ม Edit */}
                                     <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
                                         <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
                                     </button>
@@ -593,13 +709,12 @@
         </div>
     );
 
-    // --- User Management Component (New) ---
+// --- User Management Component (Clean Code) ---
     const UserManagement = ({ userRole }) => {
         const [users, setUsers] = useState([]);
         const [editingUser, setEditingUser] = useState(null);
         
         useEffect(() => {
-            // Load users from backend
             google.script.run.withSuccessHandler(setUsers).getUsers();
         }, []);
 
@@ -608,7 +723,6 @@
             google.script.run.withSuccessHandler((res) => {
                 alert(res);
                 setEditingUser(null);
-                // Reload users
                 google.script.run.withSuccessHandler(setUsers).getUsers();
             }).saveUser(editingUser);
         };
@@ -879,6 +993,39 @@
         );
     };
 
+    // --- History Modal Component ---
+const HistoryModal = ({ report, onClose }) => {
+  if (!report) return null;
+  // กลับด้าน array เพื่อให้ล่าสุดอยู่บนสุด
+  const history = report.history && report.history.length > 0 ? [...report.history].reverse() : [];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50 animate-fade-in">
+      <div className="bg-white p-6 rounded-xl w-full max-w-md max-h-[80vh] overflow-y-auto shadow-2xl">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+            <History size={20} className="text-orange-500" /> History Log
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+        </div>
+        <div className="space-y-4">
+          {history.length > 0 ? (
+            history.map((h, idx) => (
+              <div key={idx} className="border-l-2 border-orange-500 pl-4 py-1">
+                <div className="text-xs text-slate-400 mb-1">{h.time}</div>
+                <div className="font-bold text-sm text-slate-700">{h.user}</div>
+                <div className="text-sm text-slate-600">{h.action}</div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-slate-400 py-4 text-sm">No history available</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
     function App() {
       const [user, setUser] = useState(null);
       const [activeTab, setActiveTab] = useState('dashboard');
@@ -886,6 +1033,8 @@
       const [reports, setReports] = useState([]);
       const [reportToEdit, setReportToEdit] = useState(null);
       const [initializing, setInitializing] = useState(true);
+      const [historyReport, setHistoryReport] = useState(null);
+      const [isRefreshing, setIsRefreshing] = useState(false);
 
       useEffect(() => {
           // 1. Get Login Status
@@ -904,24 +1053,66 @@
           }).getLoginStatus();
       }, []);
 
+// ฟังก์ชันจัดการการส่งข้อมูล (ฉบับแก้ไข ID ไม่เปลี่ยน)
+    const handleRefreshData = () => {
+      setIsRefreshing(true);
+      google.script.run.withSuccessHandler((data) => {
+          if (data) {
+              setProjects(data.projects || []);
+              setReports(data.reports || []);
+          }
+          setIsRefreshing(false);
+          // (Option) อาจจะใส่ showNotification ว่า "Updated" ก็ได้
+      }).getInitialData();
+      };
       const handleSendReport = (data, editingReport, onSuccess) => {
           let updatedReport = null;
           const targetStatus = data.status; 
 
           if (editingReport) {
               if (editingReport.status === 'Sent') {
+                  // กรณีแก้ไขรายงานที่ "ส่งแล้ว" -> แค่อัปเวอร์ชัน แต่ใช้ ID เดิม!
                   const newVersion = editingReport.version + 1;
-                  updatedReport = { ...editingReport, id: Date.now(), date: data.date, version: newVersion, status: targetStatus, data: data };
+                  updatedReport = { 
+                      ...editingReport, 
+                      // id: Date.now(), // ⚠️ เอาออก! อย่าเปลี่ยน ID
+                      date: data.date, 
+                      version: newVersion, 
+                      status: targetStatus, 
+                      data: data 
+                  };
               } else {
-                  updatedReport = { ...editingReport, data: data, date: data.date, docNo: data.docNo, status: targetStatus };
+                  // กรณีแก้ไข "Draft" -> อัปเดตข้อมูลปกติ
+                  updatedReport = { 
+                      ...editingReport, 
+                      data: data, 
+                      date: data.date, 
+                      docNo: data.docNo, 
+                      status: targetStatus 
+                  };
               }
           } else {
-              updatedReport = { id: Date.now(), docNo: data.docNo, date: data.date, project: data.project, status: targetStatus, version: 1, data: data };
+              // กรณีสร้างใหม่จริงๆ -> สร้าง ID ใหม่
+              updatedReport = { 
+                  id: Date.now(), 
+                  docNo: data.docNo, 
+                  date: data.date, 
+                  project: data.project, 
+                  status: targetStatus, 
+                  version: 0, // เริ่มที่ 0
+                  data: data 
+              };
           }
 
+          // ส่งข้อมูลไปหลังบ้าน
           google.script.run.withSuccessHandler((response) => {
-              if (editingReport && editingReport.status !== 'Sent') { setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); } 
-              else { setReports(prev => [updatedReport, ...prev]); }
+              // อัปเดต State หน้าจอ
+              if (editingReport) { 
+                  setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); 
+              } else { 
+                  setReports(prev => [updatedReport, ...prev]); 
+              }
+              
               setReportToEdit(null);
               setActiveTab('history');
               
@@ -950,12 +1141,31 @@
 
       return (
         <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900">
+        {historyReport && (
+    <HistoryModal 
+      report={historyReport} 
+      onClose={() => setHistoryReport(null)} 
+    />
+  )}
           <div className="fixed top-4 left-4 z-30 md:hidden"><button className="p-2 bg-slate-900 text-white rounded shadow-lg"><Menu /></button></div>
           <Sidebar activeTab={activeTab} setActiveTab={(tab) => { setActiveTab(tab); if(tab !== 'create') setReportToEdit(null); }} user={user} />
-          <main className="flex-1 md:ml-64 p-8 overflow-y-auto h-screen">
+          <main className="flex-1 ml-64 p-8 overflow-y-auto h-screen relative">
+        
+        {/* 👇 2. วางปุ่ม Refresh ตรงนี้เลยครับ (แทรกก่อนหน้า Dashboard) */}
+        <div className="flex justify-end mb-4">
+            <button 
+                onClick={handleRefreshData} 
+                disabled={isRefreshing}
+                className="flex items-center space-x-2 bg-white text-slate-600 hover:text-orange-600 px-4 py-2 rounded-lg shadow-sm border border-slate-200 transition-all hover:shadow-md disabled:opacity-70"
+            >
+                {/* ถ้ากำลังหมุน ให้ใส่ class animate-spin */}
+                <span className={isRefreshing ? "animate-spin" : ""}><RefreshCw size={16} /></span>
+                <span className="text-sm font-medium">{isRefreshing ? "Updating..." : "Refresh Data"}</span>
+            </button>
+        </div>
             {activeTab === 'dashboard' && <Dashboard reports={reports} projects={projects} />}
             {activeTab === 'create' && (<CreateReport user={user} projects={projects} reports={reports} reportToEdit={reportToEdit} onSend={handleSendReport} />)}
-            {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} />}
+            {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} onViewHistory={setHistoryReport} />}
             {activeTab === 'settings' && (<SettingsPanel projects={projects} setProjects={setProjects} onSaveSettings={handleSaveSettings} userRole={user.role} />)}
           </main>
         </div>

@@ -161,27 +161,70 @@ function createPdfBlob(reportData, projectData) {
 }
 
 // ==========================================
-// 💾 SAVE REPORT logic
+// 💾 SAVE REPORT logic (Updated Naming)
 // ==========================================
 function saveReportToSheet(reportObj) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Reports');
     const userEmail = Session.getActiveUser().getEmail(); 
-    // ✅ Log ใช้ Format dd-MMM-yyyy
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy HH:mm:ss");
 
-    // จัดการรูปภาพ (คงเดิม)
+    // -------------------------------------------------------
+    // 1. ย้าย Logic การหา Version และ DocNo ขึ้นมาก่อน (เพื่อเอาไปตั้งชื่อรูป)
+    // -------------------------------------------------------
+    const data = sheet.getDataRange().getValues();
+    let rowToUpdate = -1;
+    let currentVersion = 0;
+    let historyLog = [];
+    let createdBy = userEmail;
+
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] == reportObj.id) { 
+        rowToUpdate = i + 1;
+        currentVersion = Number(data[i][5]); 
+        createdBy = data[i][8]; 
+        try { historyLog = JSON.parse(data[i][9] || "[]"); } catch(e) { historyLog = []; }
+        break; 
+      }
+    }
+
+    let actionType = "สร้างใหม่";
+    if (rowToUpdate > 0) {
+      if (reportObj.status === 'Sent') {
+         currentVersion = currentVersion + 1; // ขยับ Version ถ้ากดส่งซ้ำ
+         actionType = `แก้ไขและส่งแล้ว (v.${currentVersion})`;
+      } else {
+         actionType = "บันทึกร่าง (Draft)";
+      }
+    } else {
+      const newDocNo = generateProjectDocNo(reportObj.project);
+      reportObj.docNo = newDocNo;
+      reportObj.data.docNo = newDocNo;
+      actionType = "สร้างรายงานใหม่ (v.0)"; 
+    }
+
+    // อัปเดต Version ใน Object หลักให้เป็นปัจจุบัน
+    reportObj.version = currentVersion;
+    reportObj.data.version = currentVersion;
+
+    // -------------------------------------------------------
+    // 2. จัดการรูปภาพ (ย้ายมาทำตรงนี้ + แก้ชื่อไฟล์)
+    // -------------------------------------------------------
     reportObj.data.photos = [];
     if (reportObj.data.activities) {
       reportObj.data.activities.forEach((act, idx) => {
         if (act.photos && act.photos.length > 0) {
           act.photos = act.photos.map((photo, pIdx) => {
             if (photo && photo.startsWith('data:')) {
-              const fileName = "Act_" + idx + "_" + pIdx + "_" + new Date().getTime() + ".jpg";
+              // ✅ แก้ไขชื่อไฟล์ตรงนี้: docNo-version-idx_pIdx
+              const runNumber = `${idx + 1}_${pIdx + 1}`; 
+              const fileName = `${reportObj.docNo}-v${currentVersion}-${runNumber}.jpg`;
+              
               const fileId = uploadImageToDrive(photo, CONFIG.PHOTO_FOLDER_ID, fileName);
               if (fileId) {
                 const url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
+                // เก็บ URL และ Description ไว้ทำ PDF
                 reportObj.data.photos.push({ base64: url, desc: (act.item||"") + ": " + (act.activity||"") });
                 return url;
               }
@@ -194,41 +237,9 @@ function saveReportToSheet(reportObj) {
       });
     }
 
-    const data = sheet.getDataRange().getValues();
-    let rowToUpdate = -1;
-    let currentVersion = 0; // ✅ เริ่มต้นที่ 0
-    let historyLog = [];
-    let createdBy = userEmail;
-
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0] == reportObj.id) { 
-        rowToUpdate = i + 1; 
-        currentVersion = Number(data[i][5]); 
-        createdBy = data[i][8]; 
-        try { historyLog = JSON.parse(data[i][9] || "[]"); } catch(e) { historyLog = []; }
-        break; 
-      }
-    }
-
-    let actionType = "สร้างใหม่";
-    
-    if (rowToUpdate > 0) {
-      if (reportObj.status === 'Sent') {
-         currentVersion = currentVersion + 1; // ขยับ Version ถ้ากดส่งซ้ำ
-         actionType = `แก้ไขและส่งแล้ว (v.${currentVersion})`;
-      } else {
-         actionType = "บันทึกร่าง (Draft)";
-      }
-    } else {
-      const newDocNo = generateProjectDocNo(reportObj.project);
-      reportObj.docNo = newDocNo;
-      reportObj.data.docNo = newDocNo;
-      actionType = "สร้างรายงานใหม่ (v.0)"; // ✅ สร้างครั้งแรกเป็น v.0
-    }
-
-    reportObj.version = currentVersion;
-    reportObj.data.version = currentVersion;
-
+    // -------------------------------------------------------
+    // 3. ส่วนบันทึกลง Sheet และสร้าง PDF (คงเดิม)
+    // -------------------------------------------------------
     historyLog.push({
       user: userEmail,
       action: actionType,

@@ -161,24 +161,37 @@ function createPdfBlob(reportData, projectData) {
 }
 
 // ==========================================
-// 💾 SAVE REPORT logic (Updated Naming)
+// 💾 SAVE REPORT LOGIC (แก้ไข: ค้นหาชื่อและส่งต่อ)
 // ==========================================
 function saveReportToSheet(reportObj) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Reports');
     const userEmail = Session.getActiveUser().getEmail(); 
+    
+    // ✅ 1. เพิ่มส่วนนี้: ค้นหาชื่อผู้ใช้จาก Sheet 'Users'
+    let recorderName = userEmail; // ค่าเริ่มต้นเป็นอีเมล
+    const userSheet = ss.getSheetByName("Users");
+    if (userSheet) {
+      const userRows = userSheet.getDataRange().getValues();
+      // วนลูปหาอีเมลใน Column A (index 0) แล้วเอาชื่อจาก Column C (index 2)
+      for (let i = 1; i < userRows.length; i++) {
+        if (userRows[i][0] == userEmail) {
+          recorderName = userRows[i][2]; 
+          break;
+        }
+      }
+    }
+    
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy HH:mm:ss");
 
-    // -------------------------------------------------------
-    // 1. ย้าย Logic การหา Version และ DocNo ขึ้นมาก่อน (เพื่อเอาไปตั้งชื่อรูป)
-    // -------------------------------------------------------
+    // 1. Logic หา Version และ DocNo
     const data = sheet.getDataRange().getValues();
     let rowToUpdate = -1;
     let currentVersion = 0;
     let historyLog = [];
     let createdBy = userEmail;
-
+    
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] == reportObj.id) { 
         rowToUpdate = i + 1;
@@ -192,7 +205,7 @@ function saveReportToSheet(reportObj) {
     let actionType = "สร้างใหม่";
     if (rowToUpdate > 0) {
       if (reportObj.status === 'Sent') {
-         currentVersion = currentVersion + 1; // ขยับ Version ถ้ากดส่งซ้ำ
+         currentVersion = currentVersion + 1;
          actionType = `แก้ไขและส่งแล้ว (v.${currentVersion})`;
       } else {
          actionType = "บันทึกร่าง (Draft)";
@@ -204,27 +217,21 @@ function saveReportToSheet(reportObj) {
       actionType = "สร้างรายงานใหม่ (v.0)"; 
     }
 
-    // อัปเดต Version ใน Object หลักให้เป็นปัจจุบัน
     reportObj.version = currentVersion;
     reportObj.data.version = currentVersion;
 
-    // -------------------------------------------------------
-    // 2. จัดการรูปภาพ (ย้ายมาทำตรงนี้ + แก้ชื่อไฟล์)
-    // -------------------------------------------------------
+    // 2. จัดการรูปภาพ
     reportObj.data.photos = [];
     if (reportObj.data.activities) {
       reportObj.data.activities.forEach((act, idx) => {
         if (act.photos && act.photos.length > 0) {
           act.photos = act.photos.map((photo, pIdx) => {
             if (photo && photo.startsWith('data:')) {
-              // ✅ แก้ไขชื่อไฟล์ตรงนี้: docNo-version-idx_pIdx
               const runNumber = `${idx + 1}_${pIdx + 1}`; 
               const fileName = `${reportObj.docNo}-v${currentVersion}-${runNumber}.jpg`;
-              
               const fileId = uploadImageToDrive(photo, CONFIG.PHOTO_FOLDER_ID, fileName);
               if (fileId) {
                 const url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
-                // เก็บ URL และ Description ไว้ทำ PDF
                 reportObj.data.photos.push({ base64: url, desc: (act.item||"") + ": " + (act.activity||"") });
                 return url;
               }
@@ -237,18 +244,13 @@ function saveReportToSheet(reportObj) {
       });
     }
 
-    // -------------------------------------------------------
-    // 3. ส่วนบันทึกลง Sheet และสร้าง PDF (คงเดิม)
-    // -------------------------------------------------------
-    historyLog.push({
-      user: userEmail,
-      action: actionType,
-      time: timestamp
-    });
-
+    // 3. สร้าง PDF และ ส่งเมล
+    historyLog.push({ user: userEmail, action: actionType, time: timestamp });
+    
     const allProjects = getInitialData().projects;
     const currentProject = allProjects.find(p => p.id == reportObj.project);
     let pdfResult = { url: '', name: '' };
+    let emailStatus = { success: true, message: '' };
 
     if (reportObj.status === 'Sent' && currentProject) {
       try {
@@ -259,10 +261,26 @@ function saveReportToSheet(reportObj) {
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         pdfResult = { url: file.getUrl(), name: file.getName() };
         
-        sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url, currentVersion);
-      } catch (e) { Logger.log("PDF/Email Failed: " + e.toString()); }
+        try {
+           const quota = MailApp.getRemainingDailyQuota();
+           if (quota <= 0) throw new Error("โควต้าอีเมลประจำวันหมดแล้ว");
+           
+           // ✅ 2. ส่ง recorderName ไปด้วย
+           const sendRes = sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url, currentVersion, recorderName);
+           
+           if (!sendRes.success) throw new Error(sendRes.message);
+           
+        } catch (mailErr) {
+           emailStatus = { success: false, message: mailErr.message };
+           historyLog.push({ user: "System", action: "Email Failed: " + mailErr.message, time: timestamp });
+        }
+
+      } catch (pdfErr) { 
+         throw new Error("สร้าง PDF ไม่สำเร็จ: " + pdfErr.message); 
+      }
     }
 
+    // 4. บันทึกลง Sheet
     const rowData = [
         reportObj.id, reportObj.docNo, reportObj.date, reportObj.project, reportObj.status, 
         reportObj.version, JSON.stringify(reportObj.data), pdfResult.url,
@@ -272,14 +290,88 @@ function saveReportToSheet(reportObj) {
     if (rowToUpdate > 0) { sheet.getRange(rowToUpdate, 1, 1, 10).setValues([rowData]); } 
     else { sheet.appendRow(rowData); }
     
-    return { success: true, pdf: pdfResult, version: currentVersion, docNo: reportObj.docNo };
-  } catch (e) { return { success: false, error: e.toString() }; }
+    return { success: true, pdf: pdfResult, version: currentVersion, docNo: reportObj.docNo, emailStatus: emailStatus };
+
+  } catch (e) { 
+    return { success: false, error: e.toString() }; 
+  }
 }
 
+// ฟังก์ชันสำหรับปุ่ม Resend Email (แก้ไข: ดึงชื่อผู้กดส่งซ้ำ)
+function resendReportEmail(reportId) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('Reports');
+    const data = sheet.getDataRange().getValues();
+    
+    // 1. หา Report
+    let reportRow = null;
+    let rowIndex = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] == reportId) { reportRow = data[i]; rowIndex = i + 1; break; }
+    }
+    if (!reportRow) return { success: false, message: "ไม่พบรายงานนี้" };
+
+    const reportData = JSON.parse(reportRow[6]);
+    const pdfUrl = reportRow[7];
+    const version = reportRow[5];
+    const projectId = reportRow[3];
+
+    if (!pdfUrl) return { success: false, message: "ไม่พบไฟล์ PDF ในระบบ" };
+
+    // 2. หา Project
+    const projects = getInitialData().projects;
+    const project = projects.find(p => p.id == projectId);
+    if (!project) return { success: false, message: "ไม่พบข้อมูลโครงการ" };
+
+    // 3. ดึงไฟล์ PDF กลับมาเป็น Blob
+    // (ใช้ Regex เพื่อดึง ID ให้ชัวร์ ไม่ว่าจะมาเป็น URL แบบไหน)
+    let fileId = null;
+    if (pdfUrl.indexOf("id=") > -1) fileId = pdfUrl.split("id=")[1].split("&")[0];
+    else if (pdfUrl.indexOf("/d/") > -1) fileId = pdfUrl.split("/d/")[1].split("/")[0];
+    
+    if (!fileId) return { success: false, message: "URL ของ PDF ไม่ถูกต้อง" };
+    
+    const pdfBlob = DriveApp.getFileById(fileId).getBlob();
+
+    // ✅ 4. ค้นหาชื่อคนกด Resend จาก Sheet 'Users'
+    const userEmail = Session.getActiveUser().getEmail();
+    let recorderName = userEmail; // default
+    const userSheet = ss.getSheetByName("Users");
+    if (userSheet) {
+      const userRows = userSheet.getDataRange().getValues();
+      for (let i = 1; i < userRows.length; i++) {
+        if (userRows[i][0] == userEmail) {
+          recorderName = userRows[i][2]; 
+          break;
+        }
+      }
+    }
+
+    // 5. ส่งเมล (ส่ง recorderName ไปด้วย)
+    const result = sendEmailWithReport(reportData, project, pdfBlob, pdfUrl, version, recorderName);
+    
+    // 6. อัปเดต History Log
+    if (result.success) {
+       let history = JSON.parse(reportRow[9] || "[]");
+       history.push({ 
+         user: userEmail, 
+         action: "Resent Email (ส่งซ้ำ)", 
+         time: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy HH:mm:ss") 
+       });
+       sheet.getRange(rowIndex, 10).setValue(JSON.stringify(history));
+    }
+
+    return result;
+
+  } catch (e) {
+    return { success: false, message: e.toString() };
+  }
+}
 // ==========================================
-// 📧 EMAIL FUNCTION
+// 📧 EMAIL FUNCTION (แก้ไข: เพิ่มการแสดงชื่อผู้บันทึก)
 // ==========================================
-function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version) {
+function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, recorderName) {
   try {
     const toList = (projectData.emailTo || []).map(e => e.email).filter(e => e).join(',');
     if (!toList) return { success: false, message: "No recipient email" };
@@ -290,11 +382,9 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version) 
 
     const isEdit = (version && version > 0); 
     const subjectPrefix = isEdit ? `[ฉบับแก้ไข v.${version}] ` : `[รายงานประจำวัน] `;
-    
     const warningBadge = isEdit 
       ? `<div style="background-color: #fff3e0; color: #e65100; padding: 10px; border-radius: 5px; border: 1px solid #ffb74d; margin-bottom: 15px;">⚠️ <b>นี่คือรายงานฉบับแก้ไข (Version ${version})</b></div>` : "";
-
-    // ✅ ใช้ Format วันที่ dd-MMM-yyyy ในอีเมล
+    
     const formattedDate = formatDateStyle(reportData.date);
 
     const bodyHtml = `
@@ -307,6 +397,7 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version) 
           <tr><td style="padding: 5px; font-weight: bold; width: 100px;">โครงการ:</td><td style="padding: 5px;">${projectData.name}</td></tr>
           <tr><td style="padding: 5px; font-weight: bold;">วันที่:</td><td style="padding: 5px;">${formattedDate}</td></tr>
           <tr><td style="padding: 5px; font-weight: bold;">Version:</td><td style="padding: 5px;">${version}</td></tr>
+          <tr><td style="padding: 5px; font-weight: bold;">ผู้บันทึก:</td><td style="padding: 5px; color: #e65100;">${recorderName || "-"}</td></tr>
         </table>
         <br>
         <div style="background-color: #f1f8e9; padding: 15px; border-radius: 5px; border-left: 5px solid #8bc34a;">

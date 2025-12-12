@@ -766,6 +766,29 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory }) => {
         return sortConfig.direction === 'asc' ? <span className="text-orange-500 ml-1">↑</span> : <span className="text-orange-500 ml-1">↓</span>;
     };
 
+    const isLastEmailFailed = (report) => {
+        if (!report.history || report.history.length === 0) return false;
+        // ดึงประวัติล่าสุด (ตัวสุดท้ายใน array)
+        const lastAction = report.history[report.history.length - 1];
+        // เช็คว่ามีคำว่า Failed หรือไม่
+        return lastAction.action && (lastAction.action.includes("Email Failed") || lastAction.action.includes("ส่งเมลไม่สำเร็จ"));
+    };
+    const handleResendEmail = (report) => {
+        if (!confirm(`ยืนยันการส่งอีเมลซ้ำสำหรับเอกสาร ${report.docNo} หรือไม่?`)) return;
+
+        // เปลี่ยน cursor เป็น waiting เพื่อบอกว่ากำลังทำงาน
+        document.body.style.cursor = 'wait';
+
+        google.script.run.withSuccessHandler((res) => {
+            document.body.style.cursor = 'default'; // คืนค่า cursor
+            if (res.success) {
+                alert("✅ ส่งอีเมลซ้ำเรียบร้อยแล้ว!");
+            } else {
+                alert("❌ เกิดข้อผิดพลาด: " + res.message);
+            }
+        }).resendReportEmail(report.id);
+    };
+
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
@@ -831,18 +854,35 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory }) => {
                                     <td className="px-6 py-4 text-slate-500">{report.date}</td>
                                     <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
                                     <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                        <button onClick={() => onViewHistory(report)} className="text-slate-400 hover:text-orange-500 flex items-center gap-1 transition-colors mr-2">
-                                            <History size={16} /> <span className="text-xs group-hover:underline">History</span>
-                                        </button>
-                                        {report.pdfUrl && (
-                                            <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2">
-                                                <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
-                                            </a>
-                                        )}
-                                        <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
-                                            <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
-                                        </button>
-                                    </td>
+{/* 1. ปุ่ม History (เดิม) */}
+    <button onClick={() => onViewHistory(report)} className="text-slate-400 hover:text-orange-500 flex items-center gap-1 transition-colors mr-2">
+        <History size={16} /> <span className="text-xs group-hover:underline">History</span>
+    </button>
+
+    {/* 2. ปุ่ม PDF (เดิม) */}
+    {report.pdfUrl && (
+        <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2">
+            <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
+        </a>
+    )}
+
+    {/* 3. ปุ่ม Resend (แก้ไขใหม่: ต้องเช็คทั้ง Sent และ isLastEmailFailed) */}
+    {report.status === 'Sent' && isLastEmailFailed(report) && (
+        <button 
+            onClick={() => handleResendEmail(report)} 
+            className="text-slate-400 hover:text-green-600 flex items-center gap-1 transition-colors mr-2" 
+            title="ส่งอีเมลซ้ำ (เนื่องจากครั้งล่าสุดล้มเหลว)"
+        >
+            <Send size={16} /> <span className="text-xs group-hover:underline">Resend</span>
+        </button>
+    )}
+
+    {/* 4. ปุ่ม Edit (เดิม) */}
+    <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
+        <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
+    </button>
+
+</td>
                                 </tr>
                             ))
                         ) : (
@@ -1219,13 +1259,13 @@ const HistoryModal = ({ report, onClose }) => {
           let updatedReport = null;
           const targetStatus = data.status; 
 
+          // 1. เตรียม Object สำหรับส่งไปหลังบ้าน
           if (editingReport) {
               if (editingReport.status === 'Sent') {
-                  // กรณีแก้ไขรายงานที่ "ส่งแล้ว" -> แค่อัปเวอร์ชัน แต่ใช้ ID เดิม!
+                  // กรณีแก้ไขรายงานที่ "ส่งแล้ว" -> แค่อัปเวอร์ชัน แต่ใช้ ID เดิม
                   const newVersion = editingReport.version + 1;
                   updatedReport = { 
                       ...editingReport, 
-                      // id: Date.now(), // ⚠️ เอาออก! อย่าเปลี่ยน ID
                       date: data.date, 
                       version: newVersion, 
                       status: targetStatus, 
@@ -1249,28 +1289,82 @@ const HistoryModal = ({ report, onClose }) => {
                   date: data.date, 
                   project: data.project, 
                   status: targetStatus, 
-                  version: 0, // เริ่มที่ 0
+                  version: 0, 
                   data: data 
               };
           }
 
-          // ส่งข้อมูลไปหลังบ้าน
+          // 2. ส่งข้อมูลไปหลังบ้าน
           google.script.run.withSuccessHandler((response) => {
-              // อัปเดต State หน้าจอ
-              if (editingReport) { 
-                  setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); 
-              } else { 
-                  setReports(prev => [updatedReport, ...prev]); 
+              
+              if (response.success) {
+                  // -------------------------------------------------------
+                  // ✅ ส่วนสำคัญ: อัปเดต History "ก่อน" สั่ง setReports
+                  // -------------------------------------------------------
+                  
+                  // สร้าง Timestamp สำหรับแสดงใน History ทันที
+                  const timestamp = new Date().toLocaleString("en-GB"); 
+
+                  // ดึง History เดิมออกมา
+                  let newHistory = updatedReport.history ? [...updatedReport.history] : [];
+
+                  // A. เพิ่ม Action หลัก (สร้าง/แก้ไข)
+                  const mainAction = editingReport 
+                      ? `แก้ไขและส่งแล้ว (v.${response.version || updatedReport.version})` 
+                      : `สร้างรายงานใหม่ (v.0)`;
+                  
+                  newHistory.push({
+                      user: user.name,
+                      action: mainAction,
+                      time: timestamp
+                  });
+
+                  // B. เช็คว่าส่งเมลไม่ผ่านหรือไม่? ถ้าไม่ผ่าน ให้เพิ่มประวัติ "Email Failed" ต่อท้ายเลย
+                  if (response.emailStatus && !response.emailStatus.success) {
+                      newHistory.push({
+                          user: "System",
+                          action: "Email Failed: " + response.emailStatus.message,
+                          time: timestamp
+                      });
+                      
+                      alert(`⚠️ บันทึกข้อมูลแล้ว แต่ส่งเมลไม่สำเร็จ: ${response.emailStatus.message}\nระบบจะเปิด PDF ให้คุณนำไปส่งเอง`);
+                  } else {
+                       alert("✅ บันทึกและส่งอีเมลเรียบร้อยแล้ว");
+                  }
+
+                  // ยัด History ชุดใหม่กลับเข้าไปในตัวแปร updatedReport เพื่อให้หน้าจอรู้ทันที
+                  updatedReport.history = newHistory;
+                  
+                  // ถ้ามีการส่งค่า PDF กลับมา ให้อัปเดต URL ด้วย
+                  if (response.pdf && response.pdf.url) {
+                      updatedReport.pdfUrl = response.pdf.url;
+                      window.open(response.pdf.url, "_blank"); // เปิด PDF
+                  }
+                  
+                  // -------------------------------------------------------
+                  // ✅ จบส่วนอัปเดต History -> ทีนี้ค่อยสั่งอัปเดตหน้าจอ
+                  // -------------------------------------------------------
+                  
+                  if (editingReport) { 
+                      setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); 
+                  } else { 
+                      setReports(prev => [updatedReport, ...prev]); 
+                  }
+                  
+                  // เรียก Callback เพื่อเคลียร์หน้าจอ
+                  if (onSuccess) onSuccess();
+
+              } else {
+                  // กรณี Error จากการบันทึก Sheet (เช่น สร้าง PDF ไม่ได้เลย)
+                  alert("Error saving report: " + response.error);
               }
               
+              // Reset สถานะหน้าจอ
               setReportToEdit(null);
               setActiveTab('history');
-              
-              if (response && response.url) {
-                  window.open(response.url, "_blank");
-              }
-              if (onSuccess) onSuccess();
-          }).saveReportToSheet(updatedReport); 
+              setLoading(false); // ปิด Loading (ถ้ามี)
+
+          }).saveReportToSheet(updatedReport);
       };
 
       const handleSaveSettings = (newProjects) => { 

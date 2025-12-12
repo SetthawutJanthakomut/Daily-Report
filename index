@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Construction Daily Report System v3.0</title>
+  <title>Construction Daily Report System v1.0</title>
 
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -144,7 +144,7 @@
         <div className="w-64 bg-slate-900 text-white flex flex-col h-screen fixed left-0 top-0 z-20 shadow-xl hidden md:flex">
           <div className="p-6 border-b border-slate-800 flex items-center space-x-3">
             <div className="w-10 h-10 bg-orange-500 rounded-lg flex items-center justify-center font-bold text-xl text-white">DR</div>
-            <div><h1 className="font-bold text-lg leading-tight">Daily Report</h1><p className="text-xs text-slate-400">System v3.0</p></div>
+            <div><h1 className="font-bold text-lg leading-tight">Daily Report</h1><p className="text-xs text-slate-400">System v1.0</p></div>
           </div>
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
              {menuItems.map(item => {
@@ -180,28 +180,57 @@
       </button>
     );
 
+// ==========================================
+    // 📊 DASHBOARD (FIXED: Real Data + Wide Logo)
+    // ==========================================
     const Dashboard = ({ reports, projects }) => {
       const [filterProjectId, setFilterProjectId] = useState('all');
-      const filteredReports = filterProjectId === 'all' ? reports : reports.filter(r => r.project === parseInt(filterProjectId));
-      const selectedProjectInfo = filterProjectId === 'all' ? { name: 'All Projects', logo: '📊' } : projects.find(p => p.id === parseInt(filterProjectId));
-      
-      const chartData = [
-        { name: 'Mon', reports: filteredReports.filter((_, i) => i % 7 === 0).length + (filterProjectId === 'all' ? 2 : 0) },
-        { name: 'Tue', reports: filteredReports.filter((_, i) => i % 7 === 1).length + (filterProjectId === 'all' ? 1 : 0) },
-        { name: 'Wed', reports: filteredReports.filter((_, i) => i % 7 === 2).length + (filterProjectId === 'all' ? 3 : 0) },
-        { name: 'Thu', reports: filteredReports.filter((_, i) => i % 7 === 3).length + (filterProjectId === 'all' ? 1 : 0) },
-        { name: 'Fri', reports: filteredReports.filter((_, i) => i % 7 === 4).length + (filterProjectId === 'all' ? 2 : 0) },
-        { name: 'Sat', reports: filteredReports.filter((_, i) => i % 7 === 5).length },
-        { name: 'Sun', reports: filteredReports.filter((_, i) => i % 7 === 6).length },
-      ];
 
-      // Helper to render logo/icon in dashboard
+      // 1. Filter Reports ตาม Project ที่เลือก
+      const filteredReports = useMemo(() => {
+        if (filterProjectId === 'all') return reports;
+        return reports.filter(r => r.project === parseInt(filterProjectId));
+      }, [reports, filterProjectId]);
+
+      const selectedProjectInfo = projects.find(p => p.id === parseInt(filterProjectId));
+
+      // 2. คำนวณ Submission Activity จาก "วันที่จริง" (Real Date Logic)
+      const chartData = useMemo(() => {
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        // สร้างตัวนับเริ่มต้น 0
+        const counts = { Mon: 0, Tue: 0, Wed: 0, Thu: 0, Fri: 0, Sat: 0, Sun: 0 };
+        
+        filteredReports.forEach(r => {
+            if (!r.date) return;
+            const d = new Date(r.date);
+            const dayName = days[d.getDay()]; // 0=Sun, 1=Mon...
+            if (counts[dayName] !== undefined) counts[dayName]++;
+        });
+
+        // เรียงลำดับ Mon -> Sun เพื่อแสดงในกราฟ
+        return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(key => ({
+            name: key,
+            reports: counts[key]
+        }));
+      }, [filteredReports]);
+
+      // 3. คำนวณ Issues Reported จากข้อมูลจริง (Real Logic)
+      // นับเฉพาะ Report ที่มี Activity ไหนก็ตามระบุ Problem ที่ไม่ใช่ "-" หรือว่างเปล่า
+      const realIssuesCount = useMemo(() => {
+        return filteredReports.filter(r => {
+            const acts = r.data?.activities || [];
+            return acts.some(a => a.problem && a.problem !== '-' && a.problem.trim() !== '');
+        }).length;
+      }, [filteredReports]);
+
+      // 4. Helper แสดง Logo แบบรองรับแนวยาว (Wide Logo Support)
       const renderDashLogo = (logo) => {
         if(!logo) return '📊';
         if(logo.toString().startsWith('http') || logo.toString().startsWith('data:')) {
-           return <img src={logo} className="w-8 h-8 object-cover rounded" alt="logo"/>
+           // ✅ แก้ไข: ใช้ h-12 และ object-contain เพื่อให้รูปยาวไม่โดนตัด
+           return <img src={logo} className="h-12 w-auto max-w-[200px] object-contain rounded border border-slate-100 bg-white" alt="logo"/>
         }
-        return logo;
+        return <span className="text-3xl">{logo}</span>;
       }
 
       return (
@@ -209,15 +238,21 @@
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
                 <div className="flex items-center gap-3">
-                    <span className="text-3xl">{renderDashLogo(selectedProjectInfo?.logo)}</span>
+                    {/* ส่วนแสดง Logo */}
+                    <div className="flex items-center justify-center">
+                        {renderDashLogo(selectedProjectInfo?.logo)}
+                    </div>
                     <div>
                         <h2 className="text-2xl font-bold text-slate-800">
                              {filterProjectId === 'all' ? 'Dashboard Overview' : selectedProjectInfo?.name}
                         </h2>
-                        <p className="text-sm text-slate-500 mt-1">{filterProjectId === 'all' ? 'Summary of all ongoing construction projects.' : `Performance summary for ${selectedProjectInfo?.code}`}</p>
+                        <p className="text-sm text-slate-500 mt-1">
+                            {filterProjectId === 'all' ? 'Summary of all ongoing construction projects.' : `Performance summary for ${selectedProjectInfo?.code}`}
+                        </p>
                     </div>
                 </div>
             </div>
+            {/* Filter Dropdown */}
             <div className="flex items-center gap-3 bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
                 <Filter size={18} className="text-slate-400 ml-2" />
                 <div className="relative">
@@ -231,25 +266,31 @@
             </div>
           </div>
            
+          {/* Stat Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <StatCard title="Total Reports" value={filteredReports.length} icon={<FileText className="text-blue-500" />} change={filterProjectId === 'all' ? "Across all sites" : "For this project"} />
             <StatCard title="Pending Drafts" value={filteredReports.filter(r => r.status === 'Draft').length} icon={<Save className="text-orange-500" />} change="Needs attention" />
             <StatCard title="Sent Successfully" value={filteredReports.filter(r => r.status === 'Sent').length} icon={<CheckCircle2 className="text-green-500" />} change="Delivered" />
-            <StatCard title="Issues Reported" value={Math.floor(filteredReports.length * 0.2)} icon={<AlertCircle className="text-red-500" />} change="In last 7 days" />
+            
+            {/* ✅ Issues Reported แบบคำนวณจริง */}
+            <StatCard title="Issues Reported" value={realIssuesCount} icon={<AlertCircle className="text-red-500" />} change="Reports with problems" />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-              <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-700">Submission Activity</h3><span className="text-xs text-slate-400 px-2 py-1 bg-slate-50 rounded">Last 7 Days</span></div>
+              <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-slate-700">Submission Activity</h3><span className="text-xs text-slate-400 px-2 py-1 bg-slate-50 rounded">Weekly View</span></div>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={12} /><YAxis axisLine={false} tickLine={false} fontSize={12} /><Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="reports" fill="#f97316" radius={[4, 4, 0, 0]} barSize={30} /></BarChart>
+                  {/* ✅ กราฟแสดงข้อมูลจริง */}
+                  <BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={12} /><YAxis axisLine={false} tickLine={false} fontSize={12} allowDecimals={false} /><Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="reports" fill="#f97316" radius={[4, 4, 0, 0]} barSize={30} /></BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
+            
+            {/* Recent Reports List (เหมือนเดิม) */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
               <h3 className="font-bold text-slate-700 mb-4">Recent Reports</h3>
-              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
                 {filteredReports.length > 0 ? (filteredReports.slice(0, 5).map(report => (
                     <div key={report.id} className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg border border-slate-100 transition-colors">
                         <div className="flex items-center space-x-3">
@@ -453,7 +494,7 @@
                     {selectedProject.name}
                  </span>
                </h3>
-               <div className="text-xs text-slate-400">System v3.0</div>
+               <div className="text-xs text-slate-400">System v1.0</div>
             </div>
             <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div>
@@ -648,66 +689,175 @@
                         
                         <td className="px-2 py-2 text-center align-middle"><button onClick={() => removeRow('lookahead', idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button></td>
                     </tr>
-                ))}
+      ))}
             </tbody>
         </table>
     </div>
 </div>
+          </div>
+      );
+    };
 
-// --- ReportList Component (Fixed History Button) ---
-    const ReportList = ({ reports, projects, onEdit, onViewHistory }) => (
+// ==========================================
+// 📜 REPORT LIST (Feature: Search + Sort + Filter)
+// ==========================================
+const ReportList = ({ reports, projects, onEdit, onViewHistory }) => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterProjectId, setFilterProjectId] = useState('all');
+    const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' }); // Default: ใหม่ -> เก่า
+
+    // ฟังก์ชันสำหรับ Sort ข้อมูล
+    const requestSort = (key) => {
+        let direction = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    // Logic การกรองและเรียงลำดับข้อมูล
+    const processedReports = useMemo(() => {
+        let data = [...reports];
+
+        // 1. Filter by Project
+        if (filterProjectId !== 'all') {
+            data = data.filter(r => r.project === parseInt(filterProjectId));
+        }
+
+        // 2. Filter by Search Term
+        if (searchTerm) {
+            const lowerTerm = searchTerm.toLowerCase();
+            data = data.filter(r => {
+                const proj = projects.find(p => p.id === r.project);
+                const projName = proj ? proj.name.toLowerCase() : '';
+                return (
+                    r.docNo.toLowerCase().includes(lowerTerm) ||
+                    r.status.toLowerCase().includes(lowerTerm) ||
+                    (r.date && r.date.includes(lowerTerm)) ||
+                    projName.includes(lowerTerm)
+                );
+            });
+        }
+
+        // 3. Sort Data
+        if (sortConfig.key) {
+            data.sort((a, b) => {
+                let aValue = a[sortConfig.key];
+                let bValue = b[sortConfig.key];
+
+                // กรณี Sort ตามชื่อโครงการ (ต้องไปดึงชื่อจาก ID)
+                if (sortConfig.key === 'project') {
+                    aValue = projects.find(p => p.id === a.project)?.name || '';
+                    bValue = projects.find(p => p.id === b.project)?.name || '';
+                }
+
+                if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        return data;
+    }, [reports, projects, filterProjectId, searchTerm, sortConfig]);
+
+    // Helper แสดงลูกศร Sort
+    const SortIcon = ({ colKey }) => {
+        if (sortConfig.key !== colKey) return <span className="text-slate-300 ml-1 opacity-50">↕</span>;
+        return sortConfig.direction === 'asc' ? <span className="text-orange-500 ml-1">↑</span> : <span className="text-orange-500 ml-1">↓</span>;
+    };
+
+    return (
         <div className="space-y-6 animate-fade-in">
-            <div className="flex justify-between items-end"><h2 className="text-2xl font-bold text-slate-800">History & Sent Reports</h2></div>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+                <h2 className="text-2xl font-bold text-slate-800">History & Sent Reports</h2>
+                
+                {/* Control Bar: Search & Filter */}
+                <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                    {/* Project Filter */}
+                    <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
+                        <Filter size={16} className="text-slate-400" />
+                        <div className="relative">
+                            <select 
+                                className="appearance-none bg-transparent pr-6 text-sm font-medium text-slate-700 focus:outline-none cursor-pointer w-32 md:w-48" 
+                                value={filterProjectId} 
+                                onChange={(e) => setFilterProjectId(e.target.value)}
+                            >
+                                <option value="all">All Projects</option>
+                                <option disabled>──────────</option>
+                                {projects.map(p => (<option key={p.id} value={p.id}>{p.code}</option>))}
+                            </select>
+                            <ChevronDown size={14} className="absolute right-0 top-1 text-slate-400 pointer-events-none" />
+                        </div>
+                    </div>
+
+                    {/* Search Input */}
+                    <div className="relative">
+                        <input 
+                            type="text" 
+                            placeholder="Search DocNo, Status..." 
+                            className="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 w-full md:w-64"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <Search size={16} className="absolute left-3 top-2.5 text-slate-400" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Table */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden overflow-x-auto">
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                    <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200 select-none">
                         <tr>
-                            <th className="px-6 py-4">Status</th>
-                            <th className="px-6 py-4">Document No.</th>
-                            <th className="px-6 py-4">Project</th>
-                            <th className="px-6 py-4">Date</th>
-                            <th className="px-6 py-4">Version</th>
+                            <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>Status <SortIcon colKey="status"/></th>
+                            <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('docNo')}>Document No. <SortIcon colKey="docNo"/></th>
+                            <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('project')}>Project <SortIcon colKey="project"/></th>
+                            <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>Date <SortIcon colKey="date"/></th>
+                            <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('version')}>Version <SortIcon colKey="version"/></th>
                             <th className="px-6 py-4 text-right">Action</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {reports.map((report) => (
-                            <tr key={report.id} className="hover:bg-slate-50 transition-colors group">
-                                <td className="px-6 py-4">
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${report.status === 'Sent' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
-                                        {report.status}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 font-medium text-slate-900">{report.docNo}</td>
-                                <td className="px-6 py-4 text-slate-500">{projects.find(p=>p.id === report.project)?.name}</td>
-                                <td className="px-6 py-4 text-slate-500">{report.date}</td>
-                                <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
-                                <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                    
-                                    {/* ✅ ปุ่ม History (แก้ไขแล้ว) */}
-                                    <button onClick={() => onViewHistory(report)} className="text-slate-400 hover:text-orange-500 flex items-center gap-1 transition-colors mr-2">
-                                        <History size={16} /> <span className="text-xs group-hover:underline">History</span>
-                                    </button>
-
-                                    {/* ปุ่ม PDF */}
-                                    {report.pdfUrl && (
-                                        <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2">
-                                            <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
-                                        </a>
-                                    )}
-                                    
-                                    {/* ปุ่ม Edit */}
-                                    <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
-                                        <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
-                                    </button>
+                        {processedReports.length > 0 ? (
+                            processedReports.map((report) => (
+                                <tr key={report.id} className="hover:bg-slate-50 transition-colors group">
+                                    <td className="px-6 py-4">
+                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${report.status === 'Sent' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
+                                            {report.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 font-medium text-slate-900">{report.docNo}</td>
+                                    <td className="px-6 py-4 text-slate-500">{projects.find(p=>p.id === report.project)?.name}</td>
+                                    <td className="px-6 py-4 text-slate-500">{report.date}</td>
+                                    <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
+                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                        <button onClick={() => onViewHistory(report)} className="text-slate-400 hover:text-orange-500 flex items-center gap-1 transition-colors mr-2">
+                                            <History size={16} /> <span className="text-xs group-hover:underline">History</span>
+                                        </button>
+                                        {report.pdfUrl && (
+                                            <a href={report.pdfUrl} target="_blank" className="text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors mr-2">
+                                                <FileText size={16} /> <span className="text-xs group-hover:underline">PDF</span>
+                                            </a>
+                                        )}
+                                        <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
+                                            <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))
+                        ) : (
+                            <tr>
+                                <td colSpan="6" className="px-6 py-8 text-center text-slate-400">
+                                    No reports found matching your criteria.
                                 </td>
                             </tr>
-                        ))}
+                        )}
                     </tbody>
                 </table>
             </div>
         </div>
     );
+};
 
 // --- User Management Component (Clean Code) ---
     const UserManagement = ({ userRole }) => {

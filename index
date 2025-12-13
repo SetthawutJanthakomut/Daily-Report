@@ -323,16 +323,58 @@
        
       const [formData, setFormData] = useState({
         docNo: '', date: new Date().toISOString().split('T')[0], equipment: [], manpower: [],
-        weather: [{ timeRange: '08:00 - 12:00', condition: 'CLEAR', windSpeed: '10 km/hr' }, { timeRange: '13:00 - 17:00', condition: 'CLOUDY', windSpeed: '15 km/hr' }],
+        weather: [{ timeRange: '08:00 - 12:00', condition: 'CLEAR', windSpeed: 'ลมปกติ' }, { timeRange: '13:00 - 17:00', condition: 'CLOUDY', windSpeed: 'ลมปกติ' }],
         activities: [{ item: 'Infrastructure', qty: '', unit: '', activity: '', location: '', problem: '-', remark: '-', photos: [] }],
-        lookahead: [{ item: '', qty: '', unit: '', activity: '', location: '', remark: '-' }]
+        lookahead: [{ item: '-', qty: '-', unit: '-', activity: '-', location: '-', remark: '-' }]
       });
 
+// 1. แก้ฟังก์ชันนี้ให้คำนวณเลขรันจริง (โดยไม่สน Draft)
       const getNextDocNo = (projId, projCode) => {
-          const projectReports = reports.filter(r => r.project === projId);
-          const nextSeq = projectReports.length + 1;
+          const sentReports = reports.filter(r => 
+              r.project === projId && 
+              r.status === 'Sent' && // เอาเฉพาะที่ส่งแล้ว
+              !r.docNo.includes('DRAFT') && // ไม่เอา Draft
+              !r.docNo.includes('Pending')
+          );
+          
+          let maxNum = 0;
+          sentReports.forEach(r => {
+              const parts = r.docNo.split('-');
+              const lastPart = parts[parts.length - 1];
+              const num = parseInt(lastPart, 10);
+              if (!isNaN(num) && num > maxNum) maxNum = num;
+          });
+          
+          const nextSeq = maxNum + 1;
           return `${projCode}-RPT-DR-${String(nextSeq).padStart(3, '0')}`;
       };
+
+      // 2. แก้ useEffect เพื่อดึงเลขมาโชว์ทันที
+      useEffect(() => {
+        if (!selectedProject) return;
+
+        if (reportToEdit) {
+            let initData = { ...reportToEdit.data };
+            const proj = projects.find(p => p.id === reportToEdit.project);
+            
+            // ถ้าเป็น Draft ให้คำนวณเลขรันใหม่มาโชว์เป็น Preview
+            if (reportToEdit.status === 'Draft' && proj) {
+                 const nextNo = getNextDocNo(proj.id, proj.code);
+                 initData.docNo = nextNo; 
+            }
+
+            setFormData(initData);
+            if (proj) setSelectedProject(proj);
+        } else {
+            // กรณีสร้างใหม่
+            const newEq = selectedProject.equipmentList.map(item => ({ name: item.name, qty: item.qty }));
+            const newMp = selectedProject.manpowerList.map(item => ({ position: item.name, qty: item.qty }));
+            
+            // ✅ ดึงเลขรันถัดไปมาโชว์เลย (ไม่ต้องใช้ Pending แล้ว)
+            const nextDocNo = getNextDocNo(selectedProject.id, selectedProject.code);
+            setFormData(prev => ({ ...prev, docNo: nextDocNo, equipment: newEq, manpower: newMp }));
+        }
+      }, [selectedProject, reportToEdit]);
 
       // Helper to render logo
       const renderLogo = (logo) => {
@@ -343,20 +385,7 @@
           return <span className="text-2xl">{logo}</span>;
       };
 
-      useEffect(() => {
-        if (!selectedProject) return;
 
-        if (reportToEdit) {
-            setFormData(reportToEdit.data);
-            const proj = projects.find(p => p.id === reportToEdit.project);
-            if (proj) setSelectedProject(proj);
-        } else {
-            const newEq = selectedProject.equipmentList.map(item => ({ name: item.name, qty: item.qty }));
-            const newMp = selectedProject.manpowerList.map(item => ({ position: item.name, qty: item.qty }));
-            const nextDocNo = getNextDocNo(selectedProject.id, selectedProject.code);
-            setFormData(prev => ({ ...prev, docNo: nextDocNo, equipment: newEq, manpower: newMp }));
-        }
-      }, [selectedProject, reportToEdit]); 
 
       const [loading, setLoading] = useState(false);
       const [notification, setNotification] = useState(null);
@@ -849,7 +878,13 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
                                             {report.status}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 font-medium text-slate-900">{report.docNo}</td>
+                                    <td className="px-6 py-4 font-medium text-slate-900">
+    {/* ถ้าเป็น Draft ให้โชว์ Pending, ถ้าไม่ใช่ให้โชว์เลขจริง */}
+    {report.status === 'Draft' || report.docNo.includes('DRAFT') 
+        ? <span className="text-slate-400 italic">Pending / Draft</span> 
+        : report.docNo
+    }
+</td>
                                     <td className="px-6 py-4 text-slate-500">{projects.find(p=>p.id === report.project)?.name}</td>
                                     <td className="px-6 py-4 text-slate-500">{report.date}</td>
                                     <td className="px-6 py-4 text-slate-500">v.{report.version}</td>
@@ -884,6 +919,31 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
     </button>
 )}
 
+{/* ✅ 5. ปุ่ม Delete (เพิ่มใหม่) - แสดงเฉพาะ Draft/Pending */}
+    {(report.status === 'Draft' || report.docNo === 'Pending') && userRole !== 'visitor' && (
+        <button 
+            onClick={() => {
+                if(confirm('ยืนยันลบรายงาน Draft นี้?')) {
+                    // ลบใน UI ก่อนเลยเพื่อความเร็ว
+                    // (จริงๆ ควรเรียก backend ก่อน แต่เพื่อความลื่นไหล ลบเลยแล้วถ้า fail ค่อยโหลดใหม่ก็ได้ แต่วิธีมาตรฐานคือเรียก backend)
+                    google.script.run.withSuccessHandler((res) => {
+                        if(res.success) {
+                            alert("ลบเรียบร้อย");
+                            // Refresh หน้าจอง่ายๆ ด้วยการกดปุ่ม Refresh ที่มีอยู่แล้ว (หรือจะ reload หน้า)
+                            document.querySelector('button span:contains("Refresh Data")')?.click() || location.reload();
+                        } else {
+                            alert("ลบไม่สำเร็จ: " + res.message);
+                        }
+                    }).deleteReport(report.id);
+                }
+            }} 
+            className="text-slate-400 hover:text-red-600 flex items-center gap-1 transition-colors ml-2"
+            title="Delete Draft"
+        >
+            <Trash2 size={16} /> <span className="text-xs group-hover:underline">Del</span>
+        </button>
+    )}
+
 </td>
                                 </tr>
                             ))
@@ -906,26 +966,38 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
         const [users, setUsers] = useState([]);
         const [editingUser, setEditingUser] = useState(null);
         
-        useEffect(() => {
-            google.script.run.withSuccessHandler(setUsers).getUsers();
-        }, []);
+// แก้ไข useEffect ใน CreateReport
 
-        const handleSave = (e) => {
-            e.preventDefault();
-            google.script.run.withSuccessHandler((res) => {
-                alert(res);
-                setEditingUser(null);
-                google.script.run.withSuccessHandler(setUsers).getUsers();
-            }).saveUser(editingUser);
-        };
+      useEffect(() => {
+        if (!selectedProject) return;
 
-        const handleDelete = (email) => {
-            if(confirm('Are you sure you want to delete this user?')) {
-                google.script.run.withSuccessHandler(() => {
-                    google.script.run.withSuccessHandler(setUsers).getUsers();
-                }).deleteUser(email);
+        if (reportToEdit) {
+            // ดึงข้อมูลเดิมมา
+            let initData = { ...reportToEdit.data };
+            const proj = projects.find(p => p.id === reportToEdit.project);
+            
+            // ✅ เพิ่ม Logic: ถ้าแก้ไข "Draft" ให้คำนวณเลขรันถัดไปมาโชว์ (Preview) 
+            // แทนที่จะโชว์เลข DRAFT-xxxx เดิม
+            if (reportToEdit.status === 'Draft') {
+                if (proj) {
+                    const nextNo = getNextDocNo(proj.id, proj.code);
+                    initData.docNo = nextNo; // ยัดเลขใหม่ใส่เข้าไปโชว์
+                }
             }
-        };
+
+            setFormData(initData);
+            if (proj) setSelectedProject(proj);
+
+        } else {
+            // กรณีสร้างใหม่ (New Report)
+            const newEq = selectedProject.equipmentList.map(item => ({ name: item.name, qty: item.qty }));
+            const newMp = selectedProject.manpowerList.map(item => ({ position: item.name, qty: item.qty }));
+            
+            // โชว์เลขรันถัดไปเลย
+            const nextDocNo = getNextDocNo(selectedProject.id, selectedProject.code);
+            setFormData(prev => ({ ...prev, docNo: nextDocNo, equipment: newEq, manpower: newMp }));
+        }
+      }, [selectedProject, reportToEdit]);
 
         if (userRole !== 'admin') return <div className="p-4 text-red-500">Access Denied: Admins only.</div>;
 
@@ -1003,25 +1075,40 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
         );
     };
 
-    const SettingsPanel = ({ projects, setProjects, onSaveSettings, userRole }) => {
+const SettingsPanel = ({ projects, setProjects, userRole }) => {
         const [activeSection, setActiveSection] = useState('projects');
         const [selectedProjectId, setSelectedProjectId] = useState(projects[0]?.id);
+        
+        // Form States
         const [eqName, setEqName] = useState('');
         const [eqQty, setEqQty] = useState('');
         const [mpName, setMpName] = useState('');
         const [mpQty, setMpQty] = useState('');
+        
+        // Project Edit States
         const [newProjectName, setNewProjectName] = useState('');
         const [newProjectCode, setNewProjectCode] = useState('');
         const [newProjectLogo, setNewProjectLogo] = useState(''); 
         const [isEditingProject, setIsEditingProject] = useState(false);
         const [editingId, setEditingId] = useState(null);
+        
+        // Email States
         const [emailName, setEmailName] = useState('');
         const [emailPos, setEmailPos] = useState('');
         const [emailAddr, setEmailAddr] = useState('');
 
         const activeProject = projects.find(p => p.id === parseInt(selectedProjectId));
 
-        const saveChanges = (updatedProjects) => { setProjects(updatedProjects); onSaveSettings(updatedProjects); };
+        // --- Helper: Save Single Project to Backend ---
+        const saveProjectToBackend = (project) => {
+             // สร้าง Object ใหม่เพื่อความชัวร์
+             const p = {
+                 id: project.id, name: project.name, code: project.code, logo: project.logo,
+                 equipmentList: project.equipmentList, manpowerList: project.manpowerList,
+                 emailTo: project.emailTo, emailCc: project.emailCc
+             };
+             google.script.run.saveProjectSettings(p);
+        };
 
         const handleLogoUpload = (e) => {
             const file = e.target.files[0];
@@ -1041,12 +1128,22 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
             const logoToSave = newProjectLogo || "🏗️";
 
             if (isEditingProject) {
+                // Update
                 const updatedProjects = projects.map(p => p.id === editingId ? { ...p, name: newProjectName, code: newProjectCode, logo: logoToSave } : p);
-                saveChanges(updatedProjects);
+                setProjects(updatedProjects);
+                
+                // Save ONLY modified project
+                const changed = updatedProjects.find(p => p.id === editingId);
+                saveProjectToBackend(changed);
+                
                 setIsEditingProject(false); setEditingId(null);
             } else {
-                const newProj = { id: projects.length > 0 ? Math.max(...projects.map(p => p.id)) + 1 : 1, name: newProjectName, code: newProjectCode, logo: logoToSave, equipmentList: [], manpowerList: [], emailTo: [], emailCc: [] };
-                saveChanges([...projects, newProj]);
+                // New
+                const newId = projects.length > 0 ? Math.max(...projects.map(p => p.id)) + 1 : 1;
+                const newProj = { id: newId, name: newProjectName, code: newProjectCode, logo: logoToSave, equipmentList: [], manpowerList: [], emailTo: [], emailCc: [] };
+                
+                setProjects([...projects, newProj]);
+                saveProjectToBackend(newProj);
             }
             setNewProjectName(''); setNewProjectCode(''); setNewProjectLogo('');
         };
@@ -1061,7 +1158,17 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
             setIsEditingProject(false); setEditingId(null);
         };
 
-        const removeProject = (id) => { if (projects.length <= 1) return; const updated = projects.filter(p => p.id !== id); saveChanges(updated); if (selectedProjectId === id) setSelectedProjectId(updated[0].id); };
+        const removeProject = (id) => { 
+            if (projects.length <= 1) return; 
+            if(!confirm("Are you sure you want to delete this project?")) return;
+
+            const updated = projects.filter(p => p.id !== id); 
+            setProjects(updated); 
+            if (selectedProjectId === id) setSelectedProjectId(updated[0].id);
+            
+            // Call Delete Backend
+            google.script.run.deleteProject(id);
+        };
         
         const addItemToProject = (listType, data) => {
             const updatedProjects = projects.map(p => {
@@ -1072,7 +1179,11 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
                 }
                 return p;
             });
-            saveChanges(updatedProjects);
+            setProjects(updatedProjects);
+
+            // Save ONLY active project
+            const changed = updatedProjects.find(p => p.id === parseInt(selectedProjectId));
+            saveProjectToBackend(changed);
         };
 
         const handleAddList = (type) => {
@@ -1086,7 +1197,19 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
             setEmailName(''); setEmailPos(''); setEmailAddr('');
         };
 
-        const removeItemFromProject = (listType, index) => { const updatedProjects = projects.map(p => { if (p.id === parseInt(selectedProjectId)) { return { ...p, [listType]: p[listType].filter((_, i) => i !== index) }; } return p; }); saveChanges(updatedProjects); };
+        const removeItemFromProject = (listType, index) => { 
+            const updatedProjects = projects.map(p => { 
+                if (p.id === parseInt(selectedProjectId)) { 
+                    return { ...p, [listType]: p[listType].filter((_, i) => i !== index) }; 
+                } 
+                return p; 
+            }); 
+            setProjects(updatedProjects);
+            
+            // Save ONLY active project
+            const changed = updatedProjects.find(p => p.id === parseInt(selectedProjectId));
+            saveProjectToBackend(changed);
+        };
 
         // Helper function for rendering logo
         const renderLogo = (logo) => {
@@ -1257,127 +1380,85 @@ const HistoryModal = ({ report, onClose }) => {
           // (Option) อาจจะใส่ showNotification ว่า "Updated" ก็ได้
       }).getInitialData();
       };
-      const handleSendReport = (data, editingReport, onSuccess) => {
+const handleSendReport = (data, editingReport, onSuccess) => {
           let updatedReport = null;
           const targetStatus = data.status; 
 
-          // 1. เตรียม Object สำหรับส่งไปหลังบ้าน
+          // ... (ส่วนเตรียม Object เหมือนเดิม) ...
           if (editingReport) {
+              // ... logic เดิม ...
               if (editingReport.status === 'Sent') {
-                  // กรณีแก้ไขรายงานที่ "ส่งแล้ว" -> แค่อัปเวอร์ชัน แต่ใช้ ID เดิม
                   const newVersion = editingReport.version + 1;
-                  updatedReport = { 
-                      ...editingReport, 
-                      date: data.date, 
-                      version: newVersion, 
-                      status: targetStatus, 
-                      data: data 
-                  };
+                  updatedReport = { ...editingReport, date: data.date, version: newVersion, status: targetStatus, data: data };
               } else {
-                  // กรณีแก้ไข "Draft" -> อัปเดตข้อมูลปกติ
-                  updatedReport = { 
-                      ...editingReport, 
-                      data: data, 
-                      date: data.date, 
-                      docNo: data.docNo, 
-                      status: targetStatus 
-                  };
+                  updatedReport = { ...editingReport, data: data, date: data.date, docNo: data.docNo, status: targetStatus };
               }
           } else {
-              // กรณีสร้างใหม่จริงๆ -> สร้าง ID ใหม่
-              updatedReport = { 
-                  id: Date.now(), 
-                  docNo: data.docNo, 
-                  date: data.date, 
-                  project: data.project, 
-                  status: targetStatus, 
-                  version: 0, 
-                  data: data 
-              };
+              updatedReport = { id: Date.now(), docNo: data.docNo, date: data.date, project: data.project, status: targetStatus, version: 0, data: data };
           }
 
           // 2. ส่งข้อมูลไปหลังบ้าน
           google.script.run.withSuccessHandler((response) => {
               
               if (response.success) {
-                  // -------------------------------------------------------
-                  // ✅ ส่วนสำคัญ: อัปเดต History "ก่อน" สั่ง setReports
-                  // -------------------------------------------------------
+                  // ✅✅✅ แก้ไขจุดนี้: อัปเดตข้อมูลจริงจากหลังบ้านกลับเข้าตัวแปร updatedReport
+                  updatedReport.docNo = response.docNo;       // <-- รับเลขที่เอกสารจริงจากหลังบ้าน
+                  updatedReport.version = response.version;   // <-- รับเวอร์ชั่นจริง
+                  updatedReport.data.docNo = response.docNo;  // <-- อัปเดตใน data ด้วย
+                  updatedReport.data.version = response.version;
+                  if(response.pdf && response.pdf.url) updatedReport.pdfUrl = response.pdf.url;
                   
-                  // สร้าง Timestamp สำหรับแสดงใน History ทันที
+                  // สร้าง Timestamp
                   const timestamp = new Date().toLocaleString("en-GB"); 
-
-                  // ดึง History เดิมออกมา
                   let newHistory = updatedReport.history ? [...updatedReport.history] : [];
-
-                  // A. เพิ่ม Action หลัก (สร้าง/แก้ไข)
-                  const mainAction = editingReport 
-                      ? `แก้ไขและส่งแล้ว (v.${response.version || updatedReport.version})` 
-                      : `สร้างรายงานใหม่ (v.0)`;
+                  const mainAction = editingReport ? `แก้ไขและส่งแล้ว (v.${response.version})` : `สร้างรายงานใหม่ (v.0)`;
                   
-                  newHistory.push({
-                      user: user.name,
-                      action: mainAction,
-                      time: timestamp
-                  });
+                  newHistory.push({ user: user.name, action: mainAction, time: timestamp });
 
-                  // B. เช็คว่าส่งเมลไม่ผ่านหรือไม่? ถ้าไม่ผ่าน ให้เพิ่มประวัติ "Email Failed" ต่อท้ายเลย
                   if (response.emailStatus && !response.emailStatus.success) {
-                      newHistory.push({
-                          user: "System",
-                          action: "Email Failed: " + response.emailStatus.message,
-                          time: timestamp
-                      });
-                      
-                      alert(`⚠️ บันทึกข้อมูลแล้ว แต่ส่งเมลไม่สำเร็จ: ${response.emailStatus.message}\nระบบจะเปิด PDF ให้คุณนำไปส่งเอง`);
+                      newHistory.push({ user: "System", action: "Email Failed: " + response.emailStatus.message, time: timestamp });
+                      alert(`⚠️ บันทึกสำเร็จแต่ส่งเมลไม่ได้: ${response.emailStatus.message}`);
                   } else {
-                       alert("✅ บันทึกและส่งอีเมลเรียบร้อยแล้ว");
+                       alert("✅ บันทึกข้อมูลเรียบร้อยแล้ว");
                   }
 
-                  // ยัด History ชุดใหม่กลับเข้าไปในตัวแปร updatedReport เพื่อให้หน้าจอรู้ทันที
                   updatedReport.history = newHistory;
                   
-                  // ถ้ามีการส่งค่า PDF กลับมา ให้อัปเดต URL ด้วย
-                  if (response.pdf && response.pdf.url) {
-                      updatedReport.pdfUrl = response.pdf.url;
-                      window.open(response.pdf.url, "_blank"); // เปิด PDF
-                  }
+                  if (response.pdf && response.pdf.url) { window.open(response.pdf.url, "_blank"); }
                   
-                  // -------------------------------------------------------
-                  // ✅ จบส่วนอัปเดต History -> ทีนี้ค่อยสั่งอัปเดตหน้าจอ
-                  // -------------------------------------------------------
-                  
+                  // อัปเดตหน้าจอ
                   if (editingReport) { 
                       setReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r)); 
                   } else { 
                       setReports(prev => [updatedReport, ...prev]); 
                   }
                   
-                  // เรียก Callback เพื่อเคลียร์หน้าจอ
                   if (onSuccess) onSuccess();
 
               } else {
-                  // กรณี Error จากการบันทึก Sheet (เช่น สร้าง PDF ไม่ได้เลย)
                   alert("Error saving report: " + response.error);
               }
               
-              // Reset สถานะหน้าจอ
               setReportToEdit(null);
               setActiveTab('history');
-              setLoading(false); // ปิด Loading (ถ้ามี)
+              setLoading(false);
 
           }).saveReportToSheet(updatedReport);
       };
-
-      const handleSaveSettings = (newProjects) => { 
-          const projectsToSave = newProjects.map(p => ({
-              id: p.id, name: p.name, code: p.code, logo: p.logo,
-              equipmentList: p.equipmentList, manpowerList: p.manpowerList,
-              emailTo: p.emailTo, emailCc: p.emailCc
-          }));
-          
-          projectsToSave.forEach(p => google.script.run.saveProjectSettings(p));
-      };
+const saveChanges = (updatedProjects) => { 
+    setProjects(updatedProjects); 
+    // หาตัวที่กำลังแก้ไขอยู่
+    const projectToSave = updatedProjects.find(p => p.id === parseInt(selectedProjectId));
+    if(projectToSave) {
+        // ส่งแค่ตัวเดียวไปบันทึก ไม่ส่งทั้งหมด
+        const p = {
+             id: projectToSave.id, name: projectToSave.name, code: projectToSave.code, logo: projectToSave.logo,
+             equipmentList: projectToSave.equipmentList, manpowerList: projectToSave.manpowerList,
+             emailTo: projectToSave.emailTo, emailCc: projectToSave.emailCc
+        };
+        google.script.run.saveProjectSettings(p);
+    }
+};
       
       const startEditReport = (report) => { setReportToEdit(report); setActiveTab('create'); };
 
@@ -1412,7 +1493,7 @@ const HistoryModal = ({ report, onClose }) => {
             {activeTab === 'dashboard' && <Dashboard reports={reports} projects={projects} />}
             {activeTab === 'create' && (<CreateReport user={user} projects={projects} reports={reports} reportToEdit={reportToEdit} onSend={handleSendReport} />)}
             {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} onViewHistory={setHistoryReport} userRole={user.role} />}
-            {activeTab === 'settings' && (<SettingsPanel projects={projects} setProjects={setProjects} onSaveSettings={handleSaveSettings} userRole={user.role} />)}
+            {activeTab === 'settings' && (<SettingsPanel projects={projects} setProjects={setProjects} userRole={user.role} />)}
           </main>
         </div>
       );

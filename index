@@ -701,7 +701,7 @@
 // ==========================================
 // 📜 REPORT LIST (Feature: Search + Sort + Filter)
 // ==========================================
-const ReportList = ({ reports, projects, onEdit, onViewHistory }) => {
+const ReportList = ({ reports, projects, onEdit, onViewHistory, userRole }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterProjectId, setFilterProjectId] = useState('all');
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' }); // Default: ใหม่ -> เก่า
@@ -878,9 +878,11 @@ const ReportList = ({ reports, projects, onEdit, onViewHistory }) => {
     )}
 
     {/* 4. ปุ่ม Edit (เดิม) */}
+{userRole !== 'visitor' && (
     <button onClick={() => onEdit(report)} className="text-slate-400 hover:text-blue-600 flex items-center gap-1 transition-colors">
         <Edit size={16} /> <span className="text-xs group-hover:underline">Edit</span>
     </button>
+)}
 
 </td>
                                 </tr>
@@ -1409,7 +1411,7 @@ const HistoryModal = ({ report, onClose }) => {
         </div>
             {activeTab === 'dashboard' && <Dashboard reports={reports} projects={projects} />}
             {activeTab === 'create' && (<CreateReport user={user} projects={projects} reports={reports} reportToEdit={reportToEdit} onSend={handleSendReport} />)}
-            {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} onViewHistory={setHistoryReport} />}
+            {activeTab === 'history' && <ReportList reports={reports} projects={projects} onEdit={startEditReport} onViewHistory={setHistoryReport} userRole={user.role} />}
             {activeTab === 'settings' && (<SettingsPanel projects={projects} setProjects={setProjects} onSaveSettings={handleSaveSettings} userRole={user.role} />)}
           </main>
         </div>

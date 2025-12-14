@@ -7,13 +7,14 @@ const CONFIG = {
   PHOTO_FOLDER_ID: "1v1vmrHudXp4GMJRlrPjcvlmp0FrZA4jC", 
   LOGO_FOLDER_ID: "1wYPULSOCzlArSCPCe7NPYI7B5Q9pI8ve",
 
-  TAGS: {
+TAGS: {
     EQUIPMENT: '{{TABLE_EQUIPMENT}}',
     MANPOWER: '{{TABLE_MANPOWER}}',
     WEATHER: '{{TABLE_WEATHER}}',
     ACTIVITIES: '{{T_ACT}}',
     LOOKAHEAD: '{{T_LOOK}}',
-    PHOTOS: '{{TABLE_PHOTOS}}'
+    PHOTOS: '{{TABLE_PHOTOS}}',
+    PHOTOS_LOOKAHEAD: '{{TABLE_PHOTOS_LOOKAHEAD}}' // ✅ เพิ่มบรรทัดนี้
   }
 };
 
@@ -77,7 +78,6 @@ function formatDateStyle(dateStr) {
   if (!dateStr) return "-";
   return Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), "dd-MMM-yyyy");
 }
-
 function generateProjectDocNo(projectId) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const projSheet = ss.getSheetByName("Projects");
@@ -86,13 +86,17 @@ function generateProjectDocNo(projectId) {
   for (let i = 1; i < projData.length; i++) {
     if (projData[i][0] == projectId) { projectCode = projData[i][2]; break; }
   }
+  
   const reportSheet = ss.getSheetByName("Reports");
   const reportData = reportSheet.getDataRange().getValues();
   let maxNum = 0;
   for (let i = 1; i < reportData.length; i++) {
-    if (reportData[i][3] == projectId) {
-      const currentDocNo = reportData[i][1].toString();
-      const parts = currentDocNo.split('-');
+    const docNo = reportData[i][1].toString();
+    const status = reportData[i][4]; // เช็ค Status ด้วยเพื่อความชัวร์
+    
+    // ✅ แก้ไข: เช็ค "DRAFT" (ตัวใหญ่) และเช็ค Status ไม่ใช่ Draft
+    if (reportData[i][3] == projectId && !docNo.includes("Pending") && !docNo.includes("DRAFT") && status !== 'Draft') {
+      const parts = docNo.split('-');
       const lastPart = parts[parts.length - 1]; 
       const num = parseInt(lastPart, 10);
       if (!isNaN(num) && num > maxNum) maxNum = num;
@@ -102,6 +106,7 @@ function generateProjectDocNo(projectId) {
   const padding = (num) => (num < 10 ? '00' + num : num < 100 ? '0' + num : num);
   return `${projectCode}-RPT-DR-${padding(nextNum)}`;
 }
+
 
 // ==========================================
 // 🚀 PDF GENERATION ENGINE
@@ -149,6 +154,7 @@ function createPdfBlob(reportData, projectData) {
     processTableInternalTag(body, CONFIG.TAGS.ACTIVITIES, reportData.activities, (row, item) => { row.replaceText("{{A_Item}}", val(item.item)); row.replaceText("{{A_Qty}}", val(item.qty)); row.replaceText("{{A_Unit}}", val(item.unit)); row.replaceText("{{A_Desc}}", val(item.activity)); row.replaceText("{{A_Loc}}", val(item.location)); row.replaceText("{{A_Prob}}", val(item.problem)); row.replaceText("{{A_Rem}}", val(item.remark)); });
     processTableInternalTag(body, CONFIG.TAGS.LOOKAHEAD, reportData.lookahead, (row, item) => { row.replaceText("{{L_Item}}", val(item.item)); row.replaceText("{{L_Qty}}", val(item.qty)); row.replaceText("{{L_Unit}}", val(item.unit)); row.replaceText("{{L_Desc}}", val(item.activity)); row.replaceText("{{L_Loc}}", val(item.location)); row.replaceText("{{L_Rem}}", val(item.remark)); });
     processPhotoTable(body, CONFIG.TAGS.PHOTOS, reportData.photos);
+    processPhotoTable(body, CONFIG.TAGS.PHOTOS_LOOKAHEAD, reportData.lookaheadPhotos);
 
     tempDoc.saveAndClose();
     const pdfBlob = tempFile.getAs(MimeType.PDF).setName(reportData.docNo + "_v" + verStr + ".pdf");
@@ -161,27 +167,40 @@ function createPdfBlob(reportData, projectData) {
 }
 
 // ==========================================
-// 💾 SAVE REPORT logic (Updated Naming)
+// 💾 SAVE REPORT LOGIC (Full Version)
 // ==========================================
 function saveReportToSheet(reportObj) {
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return { success: false, error: "Server busy" }; }
+
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName('Reports');
     const userEmail = Session.getActiveUser().getEmail(); 
+    
+    // 1. หาชื่อผู้บันทึกจาก Sheet Users
+    let recorderName = userEmail;
+    const userSheet = ss.getSheetByName("Users");
+    if (userSheet) {
+      const userRows = userSheet.getDataRange().getValues();
+      for (let i = 1; i < userRows.length; i++) {
+        if (userRows[i][0] == userEmail) { recorderName = userRows[i][2]; break; }
+      }
+    }
+    
     const timestamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy HH:mm:ss");
-
-    // -------------------------------------------------------
-    // 1. ย้าย Logic การหา Version และ DocNo ขึ้นมาก่อน (เพื่อเอาไปตั้งชื่อรูป)
-    // -------------------------------------------------------
     const data = sheet.getDataRange().getValues();
     let rowToUpdate = -1;
     let currentVersion = 0;
     let historyLog = [];
     let createdBy = userEmail;
+    let oldDocNo = ""; 
 
+    // ค้นหาแถวเดิม (เพื่อดูว่าเป็นการแก้ไข หรือ สร้างใหม่)
     for (let i = 1; i < data.length; i++) {
       if (data[i][0] == reportObj.id) { 
         rowToUpdate = i + 1;
+        oldDocNo = data[i][1].toString();
         currentVersion = Number(data[i][5]); 
         createdBy = data[i][8]; 
         try { historyLog = JSON.parse(data[i][9] || "[]"); } catch(e) { historyLog = []; }
@@ -189,66 +208,104 @@ function saveReportToSheet(reportObj) {
       }
     }
 
+    // ======================================================
+    // ✅ LOGIC จัดการเลขเอกสาร (Draft vs Sent)
+    // ======================================================
+    let finalDocNo = reportObj.docNo;
     let actionType = "สร้างใหม่";
-    if (rowToUpdate > 0) {
-      if (reportObj.status === 'Sent') {
-         currentVersion = currentVersion + 1; // ขยับ Version ถ้ากดส่งซ้ำ
-         actionType = `แก้ไขและส่งแล้ว (v.${currentVersion})`;
-      } else {
-         actionType = "บันทึกร่าง (Draft)";
-      }
-    } else {
-      const newDocNo = generateProjectDocNo(reportObj.project);
-      reportObj.docNo = newDocNo;
-      reportObj.data.docNo = newDocNo;
-      actionType = "สร้างรายงานใหม่ (v.0)"; 
+
+    // A. กรณีสถานะ "Sent" (ส่งจริง)
+    if (reportObj.status === 'Sent') {
+        // เช็คว่าต้อง Gen เลขใหม่ไหม? (ถ้าของเดิมไม่มี, หรือเป็น Draft/Pending)
+        if (rowToUpdate === -1 || oldDocNo.toUpperCase().includes("DRAFT") || oldDocNo.includes("Pending") || oldDocNo === "") {
+            finalDocNo = generateProjectDocNo(reportObj.project);
+            currentVersion = 0;
+            actionType = "ส่งรายงาน (Generate No.)";
+        } else {
+            finalDocNo = oldDocNo;
+            currentVersion = currentVersion + 1;
+            actionType = `แก้ไขและส่งแล้ว (v.${currentVersion})`;
+        }
+    } 
+    // B. กรณีสถานะ "Draft" (บันทึกร่าง)
+    else {
+        if (rowToUpdate === -1 || !oldDocNo.toUpperCase().includes("DRAFT")) {
+            let pCode = "PRJ";
+            const projSheet = ss.getSheetByName("Projects");
+            const projData = projSheet.getDataRange().getValues();
+            for(let p=1; p<projData.length; p++) { 
+                if(projData[p][0] == reportObj.project) { pCode = projData[p][2]; break; } 
+            }
+            finalDocNo = `${pCode}-DRAFT-${new Date().getTime().toString().slice(-6)}`;
+            actionType = "บันทึกร่างใหม่ (New Draft)";
+        } else {
+            finalDocNo = oldDocNo;
+            actionType = "บันทึกร่าง (Update Draft)";
+        }
+        currentVersion = 0; 
     }
 
-    // อัปเดต Version ใน Object หลักให้เป็นปัจจุบัน
+    // อัปเดตค่ากลับลง Object
+    reportObj.docNo = finalDocNo;
+    reportObj.data.docNo = finalDocNo;
     reportObj.version = currentVersion;
     reportObj.data.version = currentVersion;
 
-    // -------------------------------------------------------
-    // 2. จัดการรูปภาพ (ย้ายมาทำตรงนี้ + แก้ชื่อไฟล์)
-    // -------------------------------------------------------
-    reportObj.data.photos = [];
-    if (reportObj.data.activities) {
-      reportObj.data.activities.forEach((act, idx) => {
-        if (act.photos && act.photos.length > 0) {
-          act.photos = act.photos.map((photo, pIdx) => {
-            if (photo && photo.startsWith('data:')) {
-              // ✅ แก้ไขชื่อไฟล์ตรงนี้: docNo-version-idx_pIdx
-              const runNumber = `${idx + 1}_${pIdx + 1}`; 
-              const fileName = `${reportObj.docNo}-v${currentVersion}-${runNumber}.jpg`;
-              
-              const fileId = uploadImageToDrive(photo, CONFIG.PHOTO_FOLDER_ID, fileName);
-              if (fileId) {
-                const url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
-                // เก็บ URL และ Description ไว้ทำ PDF
-                reportObj.data.photos.push({ base64: url, desc: (act.item||"") + ": " + (act.activity||"") });
-                return url;
+    // --------------------------------------------------------
+    // ✅ 2. จัดการรูปภาพ (รองรับ Multiple Files ทั้ง Activities และ Lookahead)
+    // --------------------------------------------------------
+// --------------------------------------------------------
+    // ✅ 2. จัดการรูปภาพ (แยก Activities และ Lookahead)
+    // --------------------------------------------------------
+    reportObj.data.photos = [];          // เก็บรูป Activities
+    reportObj.data.lookaheadPhotos = []; // เก็บรูป Lookahead (เพิ่มใหม่)
+
+    // ฟังก์ชันย่อยรับ targetArray เพิ่มเข้ามา
+    const processPhotos = (list, prefix, targetArray) => {
+      if (list && list.length > 0) {
+        list.forEach((item, idx) => {
+          if (item.photos && item.photos.length > 0) {
+            item.photos = item.photos.map((photo, pIdx) => {
+              if (photo && photo.startsWith('data:')) {
+                const runNumber = `${prefix}${idx + 1}_${pIdx + 1}`; 
+                const fileName = `${reportObj.docNo}-v${currentVersion}-${runNumber}.jpg`;
+                const fileId = uploadImageToDrive(photo, CONFIG.PHOTO_FOLDER_ID, fileName);
+                
+                if (fileId) {
+                  const url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1000";
+                  // ✅ Push ลง targetArray ที่ส่งเข้ามา
+                  targetArray.push({ 
+                    base64: url, 
+                    desc: (item.item||"") + ": " + (item.activity||"") 
+                  });
+                  return url;
+                }
+              } else if (photo && photo.startsWith('http')) {
+                // ✅ Push ลง targetArray ที่ส่งเข้ามา
+                targetArray.push({ 
+                  base64: photo, 
+                  desc: (item.item||"") + ": " + (item.activity||"") 
+                });
               }
-            } else if (photo && photo.startsWith('http')) {
-              reportObj.data.photos.push({ base64: photo, desc: (act.item||"") + ": " + (act.activity||"") });
-            }
-            return photo;
-          }).filter(p => p);
-        }
-      });
-    }
+              return photo;
+            }).filter(p => p);
+          }
+        });
+      }
+    };
 
-    // -------------------------------------------------------
-    // 3. ส่วนบันทึกลง Sheet และสร้าง PDF (คงเดิม)
-    // -------------------------------------------------------
-    historyLog.push({
-      user: userEmail,
-      action: actionType,
-      time: timestamp
-    });
+    // ✅ เรียกใช้โดยส่งเป้าหมายแยกกัน
+    processPhotos(reportObj.data.activities, "ACT", reportObj.data.photos);          // เข้าตัวแปร {{TABLE_PHOTOS}}
+    processPhotos(reportObj.data.lookahead, "LOOK", reportObj.data.lookaheadPhotos); // เข้าตัวแปร {{TABLE_PHOTOS_LOOKAHEAD}}
 
+    // --------------------------------------------------------
+    // 3. สร้าง PDF และ ส่งเมล (เฉพาะ Sent)
+    // --------------------------------------------------------
+    historyLog.push({ user: userEmail, action: actionType, time: timestamp });
     const allProjects = getInitialData().projects;
     const currentProject = allProjects.find(p => p.id == reportObj.project);
     let pdfResult = { url: '', name: '' };
+    let emailStatus = { success: true, message: '' };
 
     if (reportObj.status === 'Sent' && currentProject) {
       try {
@@ -259,55 +316,167 @@ function saveReportToSheet(reportObj) {
         file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
         pdfResult = { url: file.getUrl(), name: file.getName() };
         
-        sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url, currentVersion);
-      } catch (e) { Logger.log("PDF/Email Failed: " + e.toString()); }
+        try {
+           // ส่งอีเมล
+           const sendRes = sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url, currentVersion, recorderName);
+           if (!sendRes.success) throw new Error(sendRes.message);
+        } catch (mailErr) {
+           emailStatus = { success: false, message: mailErr.message };
+           historyLog.push({ user: "System", action: "Email Failed: " + mailErr.message, time: timestamp });
+        }
+      } catch (pdfErr) { throw new Error("PDF Error: " + pdfErr.message); }
     }
 
+    // 4. บันทึกลง Sheet
     const rowData = [
         reportObj.id, reportObj.docNo, reportObj.date, reportObj.project, reportObj.status, 
         reportObj.version, JSON.stringify(reportObj.data), pdfResult.url,
         createdBy, JSON.stringify(historyLog)
     ];
-
     if (rowToUpdate > 0) { sheet.getRange(rowToUpdate, 1, 1, 10).setValues([rowData]); } 
     else { sheet.appendRow(rowData); }
     
-    return { success: true, pdf: pdfResult, version: currentVersion, docNo: reportObj.docNo };
-  } catch (e) { return { success: false, error: e.toString() }; }
+    return { success: true, pdf: pdfResult, version: currentVersion, docNo: reportObj.docNo, emailStatus: emailStatus };
+
+  } catch (e) { return { success: false, error: e.toString() }; } 
+  finally { lock.releaseLock(); }
 }
 
+function deleteReport(reportId) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Reports");
+  const data = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] == reportId) {
+      // อนุญาตให้ลบได้เฉพาะ Draft หรือ Pending เท่านั้น
+      const status = data[i][4];
+      if (status !== 'Draft' && !data[i][1].toString().includes("Pending")) {
+        return { success: false, message: "ลบได้เฉพาะสถานะ Draft เท่านั้น" };
+      }
+      sheet.deleteRow(i + 1);
+      return { success: true };
+    }
+  }
+  return { success: false, message: "ไม่พบรายงาน" };
+}
+
+// ฟังก์ชันสำหรับปุ่ม Resend Email (แก้ไข: ดึงชื่อผู้กดส่งซ้ำ)
+function resendReportEmail(reportId) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('Reports');
+    const data = sheet.getDataRange().getValues();
+    
+    // 1. หา Report
+    let reportRow = null;
+    let rowIndex = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] == reportId) { reportRow = data[i]; rowIndex = i + 1; break; }
+    }
+    if (!reportRow) return { success: false, message: "ไม่พบรายงานนี้" };
+
+    const reportData = JSON.parse(reportRow[6]);
+    const pdfUrl = reportRow[7];
+    const version = reportRow[5];
+    const projectId = reportRow[3];
+
+    if (!pdfUrl) return { success: false, message: "ไม่พบไฟล์ PDF ในระบบ" };
+
+    // 2. หา Project
+    const projects = getInitialData().projects;
+    const project = projects.find(p => p.id == projectId);
+    if (!project) return { success: false, message: "ไม่พบข้อมูลโครงการ" };
+
+    // 3. ดึงไฟล์ PDF กลับมาเป็น Blob
+    // (ใช้ Regex เพื่อดึง ID ให้ชัวร์ ไม่ว่าจะมาเป็น URL แบบไหน)
+    let fileId = null;
+    if (pdfUrl.indexOf("id=") > -1) fileId = pdfUrl.split("id=")[1].split("&")[0];
+    else if (pdfUrl.indexOf("/d/") > -1) fileId = pdfUrl.split("/d/")[1].split("/")[0];
+    
+    if (!fileId) return { success: false, message: "URL ของ PDF ไม่ถูกต้อง" };
+    
+    const pdfBlob = DriveApp.getFileById(fileId).getBlob();
+
+    // ✅ 4. ค้นหาชื่อคนกด Resend จาก Sheet 'Users'
+    const userEmail = Session.getActiveUser().getEmail();
+    let recorderName = userEmail; // default
+    const userSheet = ss.getSheetByName("Users");
+    if (userSheet) {
+      const userRows = userSheet.getDataRange().getValues();
+      for (let i = 1; i < userRows.length; i++) {
+        if (userRows[i][0] == userEmail) {
+          recorderName = userRows[i][2]; 
+          break;
+        }
+      }
+    }
+
+    // 5. ส่งเมล (ส่ง recorderName ไปด้วย)
+    const result = sendEmailWithReport(reportData, project, pdfBlob, pdfUrl, version, recorderName);
+    
+    // 6. อัปเดต History Log
+    if (result.success) {
+       let history = JSON.parse(reportRow[9] || "[]");
+       history.push({ 
+         user: userEmail, 
+         action: "Resent Email (ส่งซ้ำ)", 
+         time: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd-MMM-yyyy HH:mm:ss") 
+       });
+       sheet.getRange(rowIndex, 10).setValue(JSON.stringify(history));
+    }
+
+    return result;
+
+  } catch (e) {
+    return { success: false, message: e.toString() };
+  }
+}
 // ==========================================
-// 📧 EMAIL FUNCTION
+// 📧 EMAIL FUNCTION (แก้ไข: เพิ่มการแสดงชื่อผู้บันทึก)
 // ==========================================
-function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version) {
+function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, recorderName) {
   try {
     const toList = (projectData.emailTo || []).map(e => e.email).filter(e => e).join(',');
     if (!toList) return { success: false, message: "No recipient email" };
-
+    
     let activitySummary = (reportData.activities && reportData.activities.length > 0) 
       ? reportData.activities.map(a => `<li>${a.activity || a.item}</li>`).join('')
       : "<li>- ไม่มีกิจกรรม -</li>";
 
-    const isEdit = (version && version > 0); 
-    const subjectPrefix = isEdit ? `[ฉบับแก้ไข v.${version}] ` : `[รายงานประจำวัน] `;
-    
-    const warningBadge = isEdit 
-      ? `<div style="background-color: #fff3e0; color: #e65100; padding: 10px; border-radius: 5px; border: 1px solid #ffb74d; margin-bottom: 15px;">⚠️ <b>นี่คือรายงานฉบับแก้ไข (Version ${version})</b></div>` : "";
-
-    // ✅ ใช้ Format วันที่ dd-MMM-yyyy ในอีเมล
+    const isEdit = (version && version > 0);
     const formattedDate = formatDateStyle(reportData.date);
+
+    // 1. ปรับ Subject ให้เหมือนกันทุกครั้งเพื่อรวม Thread (Daily Report : ชื่อโครงการ)
+    const subject = `Daily Report: ${projectData.name}`;
+
+    // 2. ย้ายความสำคัญของเลขที่เอกสารและสถานะ มาไว้ที่หัวข้อใน Body แทน
+    // ถ้าแก้ไข ให้ขึ้นเตือนสีส้ม ถ้าของใหม่ ให้ขึ้นสีน้ำเงินปกติ
+    const statusHeader = isEdit 
+      ? `<span style="background-color: #fff3e0; color: #e65100; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb74d; font-size: 14px;">⚠️ แก้ไขครั้งที่ ${version}</span>` 
+      : `<span style="background-color: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; border: 1px solid #90caf9; font-size: 14px;">✅ รายงานใหม่</span>`;
 
     const bodyHtml = `
       <div style="font-family: 'Sarabun', sans-serif; color: #333;">
-        ${warningBadge}
-        <h3 style="color: #0277bd;">📢 รายงานประจำวัน: ${reportData.docNo}</h3>
+        
+        <div style="margin-bottom: 15px;">
+            ${statusHeader}
+            <h3 style="color: #0277bd; margin-top: 10px; margin-bottom: 5px;">
+                ${reportData.docNo}
+            </h3>
+            <p style="margin: 0; color: #555; font-size: 14px;">วันที่ทำงาน: ${formattedDate}</p>
+        </div>
+
         <p>เรียน ผู้เกี่ยวข้อง,</p>
-        <p>ขอส่งรายงานความคืบหน้าประจำวัน ${isEdit ? "(ฉบับปรับปรุงข้อมูล)" : ""} โดยมีรายละเอียดดังนี้:</p>
+        <p>ขอส่งรายงานความคืบหน้าประจำวันของโครงการ <b>${projectData.name}</b> โดยมีรายละเอียดดังนี้:</p>
+        
         <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
-          <tr><td style="padding: 5px; font-weight: bold; width: 100px;">โครงการ:</td><td style="padding: 5px;">${projectData.name}</td></tr>
+          <tr><td style="padding: 5px; font-weight: bold; width: 100px;">เลขที่เอกสาร:</td><td style="padding: 5px;">${reportData.docNo}</td></tr>
           <tr><td style="padding: 5px; font-weight: bold;">วันที่:</td><td style="padding: 5px;">${formattedDate}</td></tr>
-          <tr><td style="padding: 5px; font-weight: bold;">Version:</td><td style="padding: 5px;">${version}</td></tr>
+          <tr><td style="padding: 5px; font-weight: bold;">Version:</td><td style="padding: 5px;">${version} (${isEdit ? "แก้ไข" : "สร้างใหม่"})</td></tr>
+          <tr><td style="padding: 5px; font-weight: bold;">ผู้บันทึก:</td><td style="padding: 5px; color: #e65100;">${recorderName || "-"}</td></tr>
         </table>
+        
         <br>
         <div style="background-color: #f1f8e9; padding: 15px; border-radius: 5px; border-left: 5px solid #8bc34a;">
           <p style="margin: 0; font-size: 16px;">
@@ -324,9 +493,10 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version) 
     MailApp.sendEmail({
       to: toList,
       cc: (projectData.emailCc || []).map(e => e.email).filter(e => e).join(','),
-      subject: `${subjectPrefix}${reportData.docNo} - ${projectData.name}`,
+      subject: subject, // ✅ ใช้ Subject แบบคงที่
       htmlBody: bodyHtml
     });
+
     return { success: true };
   } catch (e) { return { success: false, message: e.toString() }; }
 }
@@ -431,9 +601,88 @@ function uploadImageToDrive(base64Data, folderId, fileName) {
 }
 // System Settings Functions
 function getProjectSettings() { return JSON.stringify(getInitialData().projects); }
-function saveProjectSettings(p) { try { const ss = SpreadsheetApp.getActiveSpreadsheet(); const sheet = ss.getSheetByName("Projects"); const data = sheet.getDataRange().getValues(); if (p.logo && p.logo.startsWith('data:')) { const newId = uploadImageToDrive(p.logo, CONFIG.LOGO_FOLDER_ID, "logo_"+p.code+".jpg"); if(newId) p.logo=newId; } const equipStr = JSON.stringify(p.equipmentList||[]); const manStr = JSON.stringify(p.manpowerList||[]); const mailToStr = JSON.stringify(p.emailTo||[]); const mailCcStr = JSON.stringify(p.emailCc||[]); let rowIndex = -1; for(let i=1;i<data.length;i++){ if(data[i][0]==p.id){ rowIndex=i+1; break; } } if(rowIndex>0){ sheet.getRange(rowIndex,2).setValue(p.name); sheet.getRange(rowIndex,3).setValue(p.code); sheet.getRange(rowIndex,4).setValue(p.logo); sheet.getRange(rowIndex,5).setValue(equipStr); sheet.getRange(rowIndex,6).setValue(manStr); sheet.getRange(rowIndex,7).setValue(mailToStr); sheet.getRange(rowIndex,8).setValue(mailCcStr); return "อัปเดตข้อมูลเรียบร้อย"; } else { const newId = data.length > 1 ? Number(data[data.length-1][0])+1 : 1; sheet.appendRow([newId, p.name, p.code, p.logo, equipStr, manStr, mailToStr, mailCcStr]); return "เพิ่มโครงการใหม่เรียบร้อย"; } } catch(e){ return "Error: "+e.toString(); } }
+function saveProjectSettings(p) { 
+  // ใส่ Lock ป้องกันการบันทึกชนกัน
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000); // รอคิวสูงสุด 10 วินาที
+  } catch (e) {
+    return "Error: Server is busy, please try again.";
+  }
+
+  try { 
+    const ss = SpreadsheetApp.getActiveSpreadsheet(); 
+    const sheet = ss.getSheetByName("Projects"); 
+    const data = sheet.getDataRange().getValues();
+    
+    // จัดการรูปภาพ (โค้ดเดิม)
+    if (p.logo && p.logo.startsWith('data:')) { 
+      const newId = uploadImageToDrive(p.logo, CONFIG.LOGO_FOLDER_ID, "logo_"+p.code+".jpg"); 
+      if(newId) p.logo=newId; 
+    } 
+    const equipStr = JSON.stringify(p.equipmentList||[]);
+    const manStr = JSON.stringify(p.manpowerList||[]); 
+    const mailToStr = JSON.stringify(p.emailTo||[]); 
+    const mailCcStr = JSON.stringify(p.emailCc||[]); 
+    
+    let rowIndex = -1; 
+    // หา ID เดิม
+    for(let i=1;i<data.length;i++){ 
+      if(data[i][0] == p.id){ 
+        rowIndex=i+1; 
+        break; 
+      } 
+    } 
+
+    if(rowIndex>0){ 
+      // อัปเดตแถวเดิม
+      sheet.getRange(rowIndex,2).setValue(p.name); 
+      sheet.getRange(rowIndex,3).setValue(p.code); 
+      sheet.getRange(rowIndex,4).setValue(p.logo); 
+      sheet.getRange(rowIndex,5).setValue(equipStr); 
+      sheet.getRange(rowIndex,6).setValue(manStr); 
+      sheet.getRange(rowIndex,7).setValue(mailToStr); 
+      sheet.getRange(rowIndex,8).setValue(mailCcStr); 
+      return "อัปเดตข้อมูลเรียบร้อย";
+    } else { 
+      // ✅ สร้างแถวใหม่: แก้ไขวิธี Gen ID ให้หาเลขที่มากที่สุดใน Column A แทน
+      let maxId = 0;
+      for(let i=1; i<data.length; i++) {
+        let currentId = Number(data[i][0]);
+        if (!isNaN(currentId) && currentId > maxId) {
+          maxId = currentId;
+        }
+      }
+      const newId = maxId + 1; // เอาเลขมากสุด + 1 เสมอ (ไม่ซ้ำแน่นอน)
+
+      sheet.appendRow([newId, p.name, p.code, p.logo, equipStr, manStr, mailToStr, mailCcStr]); 
+      return "เพิ่มโครงการใหม่เรียบร้อย"; 
+    } 
+  } catch(e){ 
+    return "Error: "+e.toString();
+  } finally {
+    lock.releaseLock(); // ปลด Lock เมื่อเสร็จ
+  }
+}
 function saveProjectsToSheet(projects) { return {success:true}; }
 function getLoginStatus() { const email = Session.getActiveUser().getEmail(); let role='visitor', name='Guest'; const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Users"); if(sheet){ const data = sheet.getDataRange().getValues(); for(let i=1;i<data.length;i++){ if(data[i][0]==email){ role=data[i][1]; name=data[i][2]; break; } } } return {email:email, role:role, name:name}; }
 function getUsers() { const ss=SpreadsheetApp.getActiveSpreadsheet(); const sheet=ss.getSheetByName("Users"); if(!sheet) return []; const data=sheet.getDataRange().getValues(); data.shift(); return data.map(r=>({email:r[0], role:r[1], name:r[2]})); }
 function saveUser(u) { try { const ss=SpreadsheetApp.getActiveSpreadsheet(); const sheet=ss.getSheetByName("Users"); const data=sheet.getDataRange().getValues(); let idx=-1; for(let i=1;i<data.length;i++){ if(data[i][0]==u.email){ idx=i+1; break; } } if(idx>0){ sheet.getRange(idx,2).setValue(u.role); sheet.getRange(idx,3).setValue(u.name); return "อัปเดตผู้ใช้เรียบร้อย"; } else { sheet.appendRow([u.email, u.role, u.name]); return "เพิ่มผู้ใช้เรียบร้อย"; } } catch(e){ return "Error: "+e.toString(); } }
 function deleteUser(e) { try { const ss=SpreadsheetApp.getActiveSpreadsheet(); const sheet=ss.getSheetByName("Users"); const data=sheet.getDataRange().getValues(); for(let i=1;i<data.length;i++){ if(data[i][0]==e){ sheet.deleteRow(i+1); return "ลบผู้ใช้เรียบร้อย"; } } return "ไม่พบผู้ใช้"; } catch(e){ return "Error: "+e.toString(); } }
+
+function deleteProject(id) {
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return "Server busy"; }
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Projects");
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] == id) {
+        sheet.deleteRow(i + 1);
+        return "Deleted";
+      }
+    }
+  } finally { lock.releaseLock(); }
+}

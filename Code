@@ -432,14 +432,14 @@ function resendReportEmail(reportId) {
     return { success: false, message: e.toString() };
   }
 }
-// ==========================================
-// 📧 EMAIL FUNCTION (แก้ไข: เพิ่มการแสดงชื่อผู้บันทึก)
-// ==========================================
 function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, recorderName) {
   try {
     const toList = (projectData.emailTo || []).map(e => e.email).filter(e => e).join(',');
     if (!toList) return { success: false, message: "No recipient email" };
     
+    // ✅ 1. ดึงลิงก์ Web App (เพิ่มบรรทัดนี้)
+    const webAppUrl = ScriptApp.getService().getUrl(); 
+
     let activitySummary = (reportData.activities && reportData.activities.length > 0) 
       ? reportData.activities.map(a => `<li>${a.activity || a.item}</li>`).join('')
       : "<li>- ไม่มีกิจกรรม -</li>";
@@ -447,11 +447,8 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, 
     const isEdit = (version && version > 0);
     const formattedDate = formatDateStyle(reportData.date);
 
-    // 1. ปรับ Subject ให้เหมือนกันทุกครั้งเพื่อรวม Thread (Daily Report : ชื่อโครงการ)
     const subject = `Daily Report: ${projectData.name}`;
 
-    // 2. ย้ายความสำคัญของเลขที่เอกสารและสถานะ มาไว้ที่หัวข้อใน Body แทน
-    // ถ้าแก้ไข ให้ขึ้นเตือนสีส้ม ถ้าของใหม่ ให้ขึ้นสีน้ำเงินปกติ
     const statusHeader = isEdit 
       ? `<span style="background-color: #fff3e0; color: #e65100; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffb74d; font-size: 14px;">⚠️ แก้ไขครั้งที่ ${version}</span>` 
       : `<span style="background-color: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 4px; border: 1px solid #90caf9; font-size: 14px;">✅ รายงานใหม่</span>`;
@@ -483,6 +480,13 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, 
              📂 <b><a href="${pdfUrl}" target="_blank" style="color: #2e7d32; text-decoration: none;">คลิกที่นี่ เพื่อเปิดดูไฟล์รายงาน (PDF)</a></b>
           </p>
         </div>
+
+        <div style="margin-top: 20px; text-align: center;">
+            <a href="${webAppUrl}" target="_blank" style="background-color: #0288d1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 14px;">
+               🔗 เข้าสู่ระบบ Daily Report System
+            </a>
+        </div>
+        
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
         <h4>📌 สรุปกิจกรรมวันนี้:</h4>
         <ul style="line-height: 1.6;">${activitySummary}</ul>
@@ -493,7 +497,7 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, 
     MailApp.sendEmail({
       to: toList,
       cc: (projectData.emailCc || []).map(e => e.email).filter(e => e).join(','),
-      subject: subject, // ✅ ใช้ Subject แบบคงที่
+      subject: subject, 
       htmlBody: bodyHtml
     });
 

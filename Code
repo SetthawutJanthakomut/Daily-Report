@@ -319,17 +319,7 @@ function saveReportToSheet(reportObj) {
         try {
            // ส่งอีเมล
            const sendRes = sendEmailWithReport(reportObj.data, currentProject, pdfBlob, pdfResult.url, currentVersion, recorderName);
-
-if (!sendRes.success) {
-    throw new Error(sendRes.message);
-} else {
-    // ✅ บันทึก Thread ID ลงใน History Log
-    historyLog.push({ 
-        user: "System", 
-        action: "Email Sent (Thread ID: " + sendRes.threadId + ")", 
-        time: timestamp 
-    });
-}
+           if (!sendRes.success) throw new Error(sendRes.message);
         } catch (mailErr) {
            emailStatus = { success: false, message: mailErr.message };
            historyLog.push({ user: "System", action: "Email Failed: " + mailErr.message, time: timestamp });
@@ -504,22 +494,14 @@ function sendEmailWithReport(reportData, projectData, pdfBlob, pdfUrl, version, 
       </div>
     `;
 
- // เปลี่ยนเป็น GmailApp เพื่อรับค่า message ที่ส่งไป
-var sentMessage = GmailApp.sendEmail(
-  toList,           // recipient
-  subject,          // subject
-  "",               // body (text version - ปล่อยว่างไว้เพราะเราใช้ htmlBody)
-  {
-    cc: (projectData.emailCc || []).map(e => e.email).filter(e => e).join(','),
-    htmlBody: bodyHtml
-  }
-);
+    MailApp.sendEmail({
+      to: toList,
+      cc: (projectData.emailCc || []).map(e => e.email).filter(e => e).join(','),
+      subject: subject, 
+      htmlBody: bodyHtml
+    });
 
-// ดึง Thread ID ออกมา
-var threadId = sentMessage.getThread().getId();
-
-// ส่งค่า threadId กลับไปด้วย
-return { success: true, threadId: threadId };
+    return { success: true };
   } catch (e) { return { success: false, message: e.toString() }; }
 }
 
